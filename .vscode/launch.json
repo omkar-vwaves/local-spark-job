@@ -1,0 +1,366 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "java",
+            "name": "FinalPMAlertCloseMain",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.loop.FinalPMAlertCloseMain",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "CloseAlertLoopMain",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.CloseAlertLoopMain",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "OpenAlertLoopMain",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.OpenAlertLoopMain",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "PMAlertLoopTrigger",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.trigger.PMAlertLoopTrigger",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "Combine5MinNodeInsert",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.report.common.Combine5MinNodeInsert",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "Combine5MinInsert",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.report.common.Combine5MinInsert",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "InsertChildNetworkElement",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.report.common.InsertChildNetworkElement",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "InsertDummyNetworkElement",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.report.common.InsertDummyNetworkElement",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "ScheduledTrigger",
+            "request": "launch",
+            "mainClass": "com.enttribe.custom.processor.ScheduledTrigger",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "DailyScheduledTrigger",
+            "request": "launch",
+            "mainClass": "com.enttribe.custom.processor.DailyScheduledTrigger",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "CassandraQueryGenerator",
+            "request": "launch",
+            "mainClass": "com.enttribe.custom.CassandraQueryGenerator",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "MoLevelOpenAlertLoopTrigger",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.MoLevelOpenAlertLoopTrigger",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "MoLevelCloseAlertLoopTrigger",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.MoLevelCloseAlertLoopTrigger",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "PMStreamingMain",
+            "request": "launch",
+            "mainClass": "com.enttribe.streaming.pm.PMStreamingMain",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "OpenAlertMain",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.OpenAlertMain",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "ReportMain",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.report.common.ReportMain",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "AdvaParserForDelta",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.quarterly.adva.AdvaParserForDelta",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "TejasParser",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.quarterly.tejas.TejasParser",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "JuniperParserForDelta",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.quarterly.juniper.JuniperParserForDelta",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "SQLQueryGenerator",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.report.common.SQLQueryGenerator",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "OTFReportMain",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.report.otf.OTFReportMain",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "ServiceImpactMain",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.serviceimpact.ServiceImpactMain",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "MoLevelOpenAlertTrigger",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.MoLevelOpenAlertTrigger",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "MoLevelCloseAlertTrigger",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.MoLevelCloseAlertTrigger",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "PMJobTrigger",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.trigger.PMJobTrigger",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "PMAlertTrigger",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.trigger.PMAlertTrigger",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "Main",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.quarterly.cisco.Main",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "ParserMain",
+            "request": "launch",
+            "mainClass": "com.enttribe.fm.ParserMain",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "CustomDelta",
+            "request": "launch",
+            "mainClass": "com.enttribe.custom.delta.CustomDelta",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "Main",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.quarterly.cisco.Main",
+            "projectName": "spark-pm-job"
+        },
+        {
+            "type": "java",
+            "name": "CiscoParser",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.quarterly.cisco.CiscoParser",
+            "projectName": "spark-pm-job"
+        },
+        {
+            "type": "java",
+            "name": "AlarmFloodingMain",
+            "request": "launch",
+            "mainClass": "com.enttribe.custom.AlarmFloodingMain",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "NokiaParser",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.quarterly.nokia.NokiaParser",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "CiscoParser",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.quarterly.cisco.CiscoParser",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "DistinctAgentHostCounter",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.quarterly.common.DistinctAgentHostCounter",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "JuniperParser",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.quarterly.juniper.JuniperParser",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "CloseAlertApp",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.CloseAlertApp",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "ROUTER",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.ROUTER",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "L0_INSERT_15MIN",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.L0_INSERT_15MIN",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "L1_INSERT",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.L1_INSERT",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "L0_INSERT",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.L0_INSERT",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "AlertApp",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.alert.AlertApp",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "Main",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.report.otf.processors.Main",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "Main",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.altiostar.Main",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "OTFKPIReportConfigParser",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.report.otf.udfs.OTFKPIReportConfigParser",
+            "projectName": "local-spark-job"
+        },
+        {
+            "type": "java",
+            "name": "App",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.report.otf.App",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "CreateCustomPMExcelReport",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.report.CreateCustomPMExcelReport",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        },
+        {
+            "type": "java",
+            "name": "Application",
+            "request": "launch",
+            "mainClass": "com.enttribe.pm.job.quarterly.Application",
+            "projectName": "local-spark-job",
+            "vmArgs": "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED --add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED"
+        }
+    ]
+}
+

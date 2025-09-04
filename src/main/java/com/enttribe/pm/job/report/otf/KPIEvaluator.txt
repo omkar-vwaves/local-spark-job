@@ -1,0 +1,1056 @@
+package com.enttribe.pm.job.report.otf;
+
+import static org.apache.commons.lang.StringUtils.replace;
+
+import java.text.DecimalFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.GregorianCalendar;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.RowFactory;
+import org.apache.spark.sql.api.java.UDF4;
+import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructField;
+import org.joda.time.DateTime;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.gson.Gson;
+import com.enttribe.commons.Symbol;
+import com.enttribe.sparkrunner.context.JobContext;
+import com.enttribe.sparkrunner.udf.AbstractUDF;
+import com.enttribe.sparkrunner.util.Utils;
+
+import gnu.trove.map.hash.THashMap;
+
+import scala.jdk.CollectionConverters;
+
+public class KPIEvaluator implements
+		UDF4<String, scala.collection.immutable.Map<String, String>, scala.collection.immutable.Map<String, String>, String, Row>,
+		AbstractUDF {
+
+	/**
+	*
+	*/
+	private static final long serialVersionUID = 1L;
+	public static final String MIN_AGGREGATION = "min";
+	public static final String MAX_AGGREGATION = "max";
+	public static final String SUM_AGGREGATION = "sum";
+	public static final String AVG_AGGREGATION = "avg";
+	public static final String COUNT_AGGREGATION = "count";
+	public static final String UNKNOWN_OPERATOR = "Unknown operator";
+
+	private static Logger logger = LoggerFactory.getLogger(KPIEvaluator.class);
+	public static String KPI_NAMESPLIT = "KPI#";
+	public static String NODE_COUNT = "NODE_COUNT";
+	public static String FORMATE_STRING = "%f";
+	public static String EARFCNDL = "EarfcnDl";
+	public static String CIR = "CIR";
+	public static String DIVISION_BY_ZERO = "Division by zero!";
+	public static String Division_undefined = "Division undefined";
+	public static String IF_STRING = "IF";
+	public static String DISTINCT_SPLITTER = "@D@";
+	public static String HASHHASH_STRING = "##";
+	private static String magnetParamRemoval = null;
+	public static String AVERAGE_VALUE_SPLITTER = "@@";
+	private static final String MAGNET_PARAM_JSON = "MAGNET_PARAM_JSON";
+	private static Map<String, String> magnetParamMap = null;
+	private static String cellowner = null;
+	private static Map<String, Map<String, String>> kpiFormulaFinalMap = null;
+
+	public JobContext jobcontext;
+	public static String COUNT_SPLITTER = "COUNT";
+
+	public KPIEvaluator() {
+		super();
+	}
+
+	//
+	@Override
+	public Row call(String finalKey, scala.collection.immutable.Map<String, String> rawCounter,
+			scala.collection.immutable.Map<String, String> metaData, String frequency) throws Exception {
+		java.util.Map<String, String> rowDataFinalMap = CollectionConverters.MapHasAsJava(rawCounter).asJava();
+		java.util.Map<String, String> metaDataMap = new THashMap<>();
+		if (metaData != null) {
+			metaDataMap = new THashMap<>(CollectionConverters.MapHasAsJava(metaData).asJava());// CEL#ENB
+		}
+		if (magnetParamRemoval == null) {
+			getMagnetParamRemovalString();
+		}
+		String beaconHeader = jobcontext.getParameter("BeaconHeader");
+		Map<String, String> contextMap = jobcontext.getParameters();
+		Map<String, String> kpiMap = new THashMap<>();
+		Map<String, String> exceptionalKpiMap = new THashMap<>();
+		kpiFormulaFinalMap = new Gson().fromJson(contextMap.get("KPI_FORMULA_MAP"), Map.class);
+		logger.info("KPI Formula Final Map: {}", kpiFormulaFinalMap);
+		logger.info("Row Data Final Map: {}", rowDataFinalMap);
+		logger.info("Row Data Final Map Size: {}", rowDataFinalMap.size());
+		if (kpiFormulaFinalMap != null) {
+			Iterator<Map.Entry<String, Map<String, String>>> kpiFormula = kpiFormulaFinalMap.entrySet().iterator();
+			while (kpiFormula.hasNext()) {
+				int count = 0;
+				Map.Entry<String, Map<String, String>> formula = kpiFormula.next();
+				if (formula.getKey() != null && formula.getKey().contains(HASHHASH_STRING)) {
+					String formulaId = StringUtils.substringBeforeLast(formula.getKey(), HASHHASH_STRING);// formula.getKey().split(HASHHASH_STRING)[0];
+					String formulaString = StringUtils.substringAfterLast(formula.getKey(), HASHHASH_STRING);// formula.getKey().split(HASHHASH_STRING)[1];
+					String timeShiftKey = StringUtils
+							.substringBefore(StringUtils.substringAfter(formulaId, ").TimeShift("), ")");
+					if (!timeShiftKey.equalsIgnoreCase(Symbol.EMPTY_STRING)) {
+						timeShiftKey = "ts" + timeShiftKey;
+					}
+					Map<String, String> formulaCounterMap = formula.getValue();
+					for (Entry<String, String> formulaCounterEntry : formulaCounterMap.entrySet()) {
+						String counterId = formulaCounterEntry.getKey();
+						try {
+							if (!counterId.equalsIgnoreCase(Symbol.NULL_STRING)) {
+								String counterKey = formulaCounterEntry.getValue();
+								String lookupKey = String.valueOf(counterId) + timeShiftKey;
+								logger.info("Looking for counter ID: {} with key: {}", counterId, lookupKey);
+								if (rowDataFinalMap.get(lookupKey) != null) {
+									String value = String.valueOf(rowDataFinalMap.get(lookupKey));
+									logger.info("Found counter value: {} for key: {}", value, lookupKey);
+									if (!StringUtils.isEmpty(value)) {
+										try {
+											formulaString = createExpression(formulaString, counterKey, value);
+										} catch (Exception e) {
+											e.printStackTrace();
+										}
+									}
+								} else {
+									logger.info("Counter not found for key: {}", lookupKey);
+									formulaString = createNVLExpression(formulaString, counterKey);
+								}
+							}
+						} catch (Exception e) {
+							logger.info("Exception in Evaluating KPI : {} ", e.getMessage());
+							logger.info("counterId {} -- {}  -- {}", counterId, formulaString, rowDataFinalMap);
+						}
+					}
+					if (count < 1) {
+						try {
+							formulaString = replaceMetaDetail(formulaString, metaDataMap);
+							com.enttribe.sparkrunner.util.Expression expression1 = new com.enttribe.sparkrunner.util.Expression(
+									formulaString, true);
+							String kpiValue = expression1.eval();
+							for (String kpiId : formulaId.split(",")) {
+								kpiMap.put(String.valueOf(kpiId), kpiValue);
+							}
+						} catch (Exception e) {
+							// logger.info(" Inside Catch : {} and formulaString : {} ", e.getMessage(),
+							// formulaString);
+							if ((e.getMessage() != null || e.getMessage().equalsIgnoreCase(DIVISION_BY_ZERO))
+									&& !e.getMessage().contains(UNKNOWN_OPERATOR)) {
+								for (String kpiId : formulaId.split(",")) {
+									kpiMap.put(String.valueOf(kpiId), String.valueOf(Double.NaN));
+								}
+							} else {
+								if (formulaString.contains(KPI_NAMESPLIT) || formulaString.contains(IF_STRING)
+										|| formulaString.contains("MIN") || formulaString.contains("MAX")
+										|| formulaString.contains("FLOOR") || formulaString.contains("DECTOHEX")
+										|| formulaString.contains("HEXTODEC") || formulaString.contains("ROUND")
+										|| formulaString.contains("CEILING") || formulaString.contains("LEN")
+										|| formulaString.contains("RIGHT") || formulaString.contains("LEFT")
+										|| formulaString.contains("TimeShift")) {
+									for (String kpiId : formulaId.split(",")) {
+										exceptionalKpiMap.put(String.valueOf(kpiId), formulaString);
+									}
+								} else {
+									kpiMap.put(String.valueOf(formulaId), formulaString);
+								}
+							}
+
+						}
+					}
+				}
+			}
+		}
+		if (!StringUtils.isEmpty(finalKey)) {
+			setBIColumns(finalKey, metaDataMap, frequency, beaconHeader);
+		}
+		List<String> kpiList = new ArrayList<>();
+		List<String> counterIdList = new ArrayList<>();
+		// setKPIsAndCounterList(contextMap.get("kpi"), kpiList, counterIdList);
+		// String kpiCodeList= contextMap.get("KPI_CODE_LIST");
+		// String counterIdList2= contextMap.get("COUNTER_ID_LIST");
+
+		String kpiCodeCommaSeparated = contextMap.get("KPI_CODE_COMMA_SEPARATED");
+		String counterIdCommaSeparated = contextMap.get("COUNTER_ID_COMMA_SEPARATED");
+
+		String[] kpiCodeArray = kpiCodeCommaSeparated.split(",");
+		String[] counterIdArray = counterIdCommaSeparated.split(",");
+		for (String kpiCode : kpiCodeArray) {
+			kpiList.add(kpiCode.trim());
+		}
+		for (String counterId : counterIdArray) {
+			counterIdList.add(counterId.trim());
+		}
+
+		// kpiCodeList = kpiCodeList.replaceAll("\\[", "").replaceAll("\\]", "");
+		// counterIdList2 = counterIdList2.replaceAll("\\[", "").replaceAll("\\]", "");
+		// kpiList = Arrays.asList(kpiCodeList.split(","));
+		// counterIdList = Arrays.asList(counterIdList2.split(","));
+		columsRemover(metaDataMap);
+		// List<String> columnsToSet = new ArrayList<>(
+		// Arrays.asList(contextMap.get("finalMetaColumns").split(Symbol.COMMA_STRING)));
+		List<String> columnsToSet = Arrays.asList("DATE", "TIME", "DL1", "DL2", "DL3", "DL4", "H1", "H1_NEID", "NET",
+				"NS", "NEID",
+				"NAM");
+		// logger.info("exceptionalKpiMap : {} and kpiMap : {} ",
+		// exceptionalKpiMap,kpiMap);
+		logger.info("Before getUpdateValueByKpi - exceptionalKpiMap: {}", exceptionalKpiMap);
+		logger.info("Before getUpdateValueByKpi - kpiMap: {}", kpiMap);
+		kpiMap = getUpdateValueByKpi(exceptionalKpiMap, kpiMap);
+		logger.info("After getUpdateValueByKpi - kpiMap: {}", kpiMap);
+		// logger.info("kpiMap ---> {} and rowDataFinalMap : {} and metaDataMap : {} ",
+		// kpiMap, rowDataFinalMap,
+		// metaDataMap);
+		// String genericKPIWiseFormulaDesc =
+		// jobcontext.getParameter("genericKPIWiseFormulaDesc");
+		// Map<String, String> genericKPIWiseFormulaDescs = new
+		// Gson().fromJson(genericKPIWiseFormulaDesc, Map.class);
+		// if (MapUtils.isNotEmpty(genericKPIWiseFormulaDescs)) {
+		// kpiMap = genericKpiEvaluator(genericKPIWiseFormulaDescs, kpiMap,
+		// metaDataMap);
+		// }
+		Object[] resultArray = initializeObjectArray(kpiList, counterIdList, columnsToSet);
+		int arrayIndex = 0;
+		getValueMapFromResult(metaDataMap, kpiMap, columnsToSet, resultArray, arrayIndex, rowDataFinalMap, kpiList,
+				counterIdList);
+
+		logger.info("KPI Evaluator Result: {}", Arrays.toString(resultArray));
+
+		String metaCols = contextMap.get("finalMetaColumns");
+		logger.info("KPI Evaluator metaCols: {}", metaCols);
+
+		Row row = RowFactory.create(resultArray);
+		for (int i = 0; i < row.size(); i++) {
+			Object value = row.get(i);
+			logger.info("Row Field[{}]: Value = {}, Type = {}", i, value,
+					value != null ? value.getClass().getName() : "null");
+		}
+
+		return row;
+	}
+
+	private String createNVLExpression(String formulaString, String counterKey) {
+		String replaceString = "NVL((" + counterKey + "),";
+		String replaceString3Bracket = "NVL(((" + counterKey + ")),";
+		if (formulaString.contains(replaceString3Bracket)) {
+			formulaString = replace(formulaString, replaceString3Bracket, "(");
+		}
+		if (formulaString.contains(replaceString)) {
+			formulaString = replace(formulaString, replaceString, "(");
+		} else {
+			formulaString = replace(formulaString, counterKey, "(");
+		}
+		return formulaString;
+	}
+
+	private String replaceMetaDetail(String formulaeString, Map<String, String> metaMap) {
+		if (formulaeString.contains("#$") || formulaeString.contains("(EQUALS(#")
+				|| formulaeString.contains("(NOT_EQUALS(#)") || formulaeString.contains("LEFT(")
+				|| formulaeString.contains("RIGHT(")) {
+			final Pattern pattern = Pattern.compile("EQUALS(.*?),");
+			final Matcher matcher = pattern.matcher(formulaeString);
+			while (matcher.find()) {
+				String match = matcher.group(1).replace("(", "").replace(")", "");
+				String matchkey = StringUtils.substringBetween(match, "#", "#");
+				formulaeString = StringUtils.replace(formulaeString, "#" + matchkey + "#",
+						Symbol.QUOTE_STRING + metaMap.get(matchkey) + Symbol.QUOTE_STRING);
+			}
+			if (formulaeString.contains("#$") && formulaeString.contains("$#")) {
+				final Pattern operatorPattern = Pattern.compile("#\\$(.*?)\\$#");
+				final Matcher operatorMatcher = operatorPattern.matcher(formulaeString);
+				while (operatorMatcher.find()) {
+					String matchkey = operatorMatcher.group(1).replace("(", "").replace(")", "");
+					formulaeString = StringUtils.replace(formulaeString, "#$" + matchkey + "$#", metaMap.get(matchkey));
+				}
+			}
+			formulaeString = formulaeString.replace("\\\"", "'").replace("'", "\"");
+		}
+		return formulaeString;
+	}
+
+	private Map<String, String> genericKpiEvaluator(Map<String, String> genericKPIWiseFormulaDesc,
+			Map<String, String> kpiValues, Map<String, String> metaDataMap) {
+		Map<String, String> exceptionalKpiMap = new HashMap<>();
+		for (Entry<String, String> kpicodeWiseFormulaDesc : genericKPIWiseFormulaDesc.entrySet()) {
+			String kpiCode = kpicodeWiseFormulaDesc.getKey();
+			String formulaDesc = kpicodeWiseFormulaDesc.getValue();
+			formulaDesc = replaceFormulaDescWithValue(kpiValues, formulaDesc);
+			try {
+				formulaDesc = replaceMetaDetail(formulaDesc, metaDataMap);
+				com.enttribe.sparkrunner.util.Expression expression1 = new com.enttribe.sparkrunner.util.Expression(
+						formulaDesc,
+						true);
+				double kpiValue = Double.parseDouble(expression1.eval());
+				updateValueMap(kpiValues, kpiCode, kpiValue);
+			} catch (Exception e) {
+				// logger.info("Exception in genericKPIEvaluator : {} and kpiCode : {} ",
+				// e.getMessage(), kpiCode);
+				if ((e.getMessage() != null || e.getMessage().equalsIgnoreCase(DIVISION_BY_ZERO))
+						&& !e.getMessage().contains(UNKNOWN_OPERATOR)) {
+					updateValueMap(kpiValues, kpiCode, Double.NaN);
+				} else {
+					exceptionalKpiMap.put(String.valueOf(kpiCode), formulaDesc);
+				}
+			}
+		}
+		if (exceptionalKpiMap.size() > 0) {
+			// logger.info("Inside exceptionalKpiMap ..... ");
+			kpiValues = getUpdateValueByKpi(kpiValues, exceptionalKpiMap);
+			// logger.info(" Getting kpi map is {} ", kpiValues);
+		}
+		return kpiValues;
+	}
+
+	private String replaceFormulaDescWithValue(Map<String, String> kpiValues, String formulaDesc) {
+		for (Entry<String, String> kpiValue : kpiValues.entrySet()) {
+			if (formulaDesc.contains(kpiValue.getKey())) {
+				formulaDesc = org.apache.commons.lang3.StringUtils.replace(formulaDesc, "KPI#" + kpiValue.getKey(),
+						kpiValue.getValue());
+			}
+		}
+		formulaDesc = formulaDesc.replace("{", "(").replace("}", ")");
+		return formulaDesc;
+	}
+
+	private Map<String, String> updateValueMap(Map<String, String> kpiMap, String formulaId, double kpiValue) {
+		for (String kpiId : formulaId.split(Symbol.COMMA_STRING)) {
+			kpiMap.put(kpiId, String.format(FORMATE_STRING, kpiValue));
+		}
+		return kpiMap;
+	}
+
+	private Double getAggreagateValue(String aggregationType, List<Double> valueList) {
+		Double result;
+		switch (aggregationType.toLowerCase()) {
+			case MIN_AGGREGATION:
+				result = valueList.stream().mapToDouble(Double::doubleValue).min().getAsDouble();
+				break;
+			case MAX_AGGREGATION:
+				result = valueList.stream().mapToDouble(Double::doubleValue).max().getAsDouble();
+				break;
+			case SUM_AGGREGATION:
+				result = valueList.stream().mapToDouble(Double::doubleValue).sum();
+				break;
+			case AVG_AGGREGATION:
+				result = valueList.stream().mapToDouble(Double::doubleValue).average().getAsDouble();
+				break;
+			case COUNT_AGGREGATION:
+				result = valueList.stream().mapToDouble(Double::doubleValue).average().getAsDouble();
+				break;
+			default:
+				result = 0.0d;
+		}
+		return result;
+	}
+
+	private void getGenericKPIWiseNormalKPIs(List<String> mappedKPIs, Map<String, List<String>> genericKPIwiseKPIs) {
+		for (String kpi : mappedKPIs) {
+			List<String> generickpicodes = Arrays.asList(kpi.split(","));
+			String normalKPI = kpi.split(",")[0];
+			for (String generickpicode : generickpicodes) {
+				if (!generickpicode.equalsIgnoreCase(normalKPI)) {
+					if (genericKPIwiseKPIs.containsKey(generickpicode)) {
+						List<String> kpiValues = genericKPIwiseKPIs.get(generickpicode);
+						kpiValues.add(normalKPI);
+						genericKPIwiseKPIs.put(generickpicode, kpiValues);
+					} else {
+						List<String> kpis = new ArrayList<>();
+						kpis.add(normalKPI);
+						genericKPIwiseKPIs.put(generickpicode, kpis);
+					}
+				}
+			}
+		}
+	}
+
+	private void setKPIsAndCounterList(String kpiString, List<String> kpiList, List<String> counterList) {
+		try {
+			if (!StringUtils.isEmpty(kpiString)) {
+
+				org.json.JSONArray kpiJson = new JSONArray(kpiString);
+				for (Integer i = 0; i < kpiJson.length(); i++) {
+					JSONObject jsonObject = kpiJson.getJSONObject(i);
+					String kpiName = jsonObject.getString("kpiName");
+					String kpiCode = kpiName.split(Symbol.HYPHEN_STRING)[0];
+					if (!kpiName.contains(Symbol.HYPHEN_STRING)) {
+						kpiCode = jsonObject.getString("kpicode");
+					}
+					if (jsonObject.getString("type").equalsIgnoreCase("KPI")) {
+						kpiList.add(kpiCode);
+					} else if (jsonObject.getString("type").equalsIgnoreCase("Counter")) {
+						counterList.add(kpiCode);
+					}
+				}
+
+			}
+
+		} catch (Exception e) {
+			logger.error("Exception in getting Hbase Read Column from KPIJson :{}", ExceptionUtils.getStackTrace(e));
+		}
+	}
+
+	private Map<String, String> columsRemover(Map<String, String> metaDataMap) {
+		String filterLevel = jobcontext.getParameter("AGGREGATION_LEVEL");
+		String nodeVal = jobcontext.getParameter("nodeVal");
+		String reportLevel = jobcontext.getParameter("reportLevel");
+		// metaDataMap.put("NAM", metaDataMap.get(filterLevel));
+		String technology = jobcontext.getParameter("technology");
+		metaDataMap.put("T", technology);
+		try {
+			switch (filterLevel) {
+				case "NEID":
+				case "CEL":// RRH
+					break;
+				case "ENB_NEID":
+				case "ENB":// RIU
+
+					updateMetaInfoMap(metaDataMap, "CEL#NEID#NET#EGID" + magnetParamRemoval);
+					metaDataMap.put("NAM", metaDataMap.get("ENB"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+				case "H2_NEID":
+				case "H2":// VDU
+
+					updateMetaInfoMap(metaDataMap, "CEL#NEID#ENB#ENB_NEID#NET#EGID#SC#NEL#SFID" + magnetParamRemoval);
+					metaDataMap.put("NAM", metaDataMap.get("H2"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+				case "H1_NEID":
+				case "H1":// VCU
+
+					updateMetaInfoMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#EGID#SC#NEL#SFID#OG" + magnetParamRemoval);
+					metaDataMap.put("NAM", metaDataMap.get("H1"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+				case "GC":// Group Center
+					updateMetaInfoMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#SC#NEL#SFID"
+									+ magnetParamRemoval);
+					break;
+				case "VNF":
+					updateMetaInfoMap(metaDataMap, "NEID#CEL#PMEMSID#NEID" + magnetParamRemoval);
+					metaDataMap.put("ENB", metaDataMap.get("VNF"));
+					break;
+				case "L4":
+					updateMetaInfoMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#GC#SC#OG#DOG#NEL#SFID"
+									+ magnetParamRemoval);
+					metaDataMap.put("NAM", metaDataMap.get("L4"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+				case "L3":
+					updateMetaInfoMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#GC#L4#DL4#SC#OG#DOG#NEL#SFID"
+									+ magnetParamRemoval);
+					metaDataMap.put("NAM", metaDataMap.get("L3"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+				case "L2":
+					updateMetaInfoMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#GC#L4#DL4#L3#DL3#SC#OG#DOG#NEL#SFID"
+									+ magnetParamRemoval);
+					metaDataMap.put("NAM", metaDataMap.get("L2"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+				case "L1":
+					updateMetaInfoMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#GC#L4#DL4#L3#DL3#DL2#L2#SC#OG#DOG#NEL#SFID#NEID#CEL#PMEMSID#ENB#VNF#VNFNEID"
+									+ magnetParamRemoval);
+					metaDataMap.put("NAM", metaDataMap.get("L1"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+				case "L0":
+
+					updateMetaInfoMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#GC#L4#DL4#L3#DL3#DL2#L2#SC#OG#DOG#NEL#SFID#NEID#CEL#PMEMSID#ENB#VNF#VNFNEID"
+									+ magnetParamRemoval);
+					metaDataMap.put("NAM", metaDataMap.get("L0"));
+					metaDataMap.put("L1", metaDataMap.remove("L0"));
+					metaDataMap.put("DL1", metaDataMap.remove("DL0"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					if (reportLevel.equalsIgnoreCase("CUSTOM") && !nodeVal.equalsIgnoreCase("INDIVIDUAL")) {
+						metaDataMap.put("NAM", "CUSTOM");
+						metaDataMap.put("L0", "CUSTOM");
+						metaDataMap.put("L1", "CUSTOM");
+						metaDataMap.put("DL1", "CUSTOM");
+					}
+					break;
+				case "OG":
+					updateMetaInfoMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#GC#L4#DL4#L3#DL3#DL2#L2#DL1#L1#SC#NEL#SFID"
+									+ magnetParamRemoval);
+					break;
+				case "NEL":
+					updateMetaInfoMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#GC#SC#OG#DOG#SFID"
+									+ magnetParamRemoval);
+					break;
+			}
+			// logger.info("aggrLevel {}, metaInfoMapAsJavaMap {} ",filterLevel,
+			// metaDataMap);
+		} catch (Exception e) {
+			logger.info("Exception is {}", Utils.getStackTrace(e));
+			logger.info("aggrLevel {}, metaInfoMapAsJavaMap {} ", filterLevel, metaDataMap);
+		}
+		return metaDataMap;
+	}
+
+	private void getMagnetParamRemovalString() {
+		String parameter = jobcontext.getParameter(MAGNET_PARAM_JSON);
+		ObjectMapper mapper = new ObjectMapper();
+		try {
+			// magnetParamMap = mapper.readValue(parameter, new TypeReference<Map<String,
+			// String>>() {
+			// });
+			// cellowner = magnetParamMap.get("cellowner");
+			// magnetParamRemoval = magnetParamMap.entrySet().stream()
+			// .filter(e -> !e.getKey().equalsIgnoreCase("cellowner")).map(Entry::getValue)
+			// .collect(Collectors.joining("#"));
+			// logger.info("magnetParamMap size in class @CreateMetaData - {}",
+			// magnetParamMap.size());
+		} catch (Exception e) {
+			logger.error("Exception occured in method @getMagnetParamMap in class @CreateMetaData- {}",
+					ExceptionUtils.getStackTrace(e));
+		}
+	}
+
+	private static Map<String, String> updateMetaInfoMap(Map<String, String> metaInfo, String removeKey) {
+		String[] removeKeyArray = removeKey.split(Symbol.HASH_STRING);
+		for (String key : removeKeyArray) {
+			metaInfo.remove(key);
+		}
+		return metaInfo;
+	}
+
+	private Map<String, String> setBIColumns(String finalKey, Map<String, String> metaInfo, String frequency,
+			String beaconHeader) throws ParseException {
+		String finalTimeShiftKeys = jobcontext.getParameter("finalTimeShiftKeys");
+		finalTimeShiftKeys = "false";
+		String timeKey = StringUtils.substringAfter(finalKey, HASHHASH_STRING);
+		SimpleDateFormat dateFormat = null;
+		SimpleDateFormat requiredDateFormate = null;
+		Date date = null;
+		if (frequency.equalsIgnoreCase("15 Min") || frequency.equalsIgnoreCase("QUARTERLY")) {
+			dateFormat = new SimpleDateFormat("yyyyMMddHHmm");
+			requiredDateFormate = new SimpleDateFormat("yyyyMMddHHmm");
+		} else if (frequency.equalsIgnoreCase("HOURLY") || frequency.equalsIgnoreCase("PERHOUR")) {
+			timeKey = timeKey.trim().substring(0, 10);
+			dateFormat = new SimpleDateFormat("yyyyMMddHH");
+			requiredDateFormate = new SimpleDateFormat("yyyyMMddHH");
+		} else if (frequency.equalsIgnoreCase("DAILY") || frequency.equalsIgnoreCase("PERDAY")
+				|| frequency.equalsIgnoreCase("BBH") || frequency.equalsIgnoreCase("NBH")
+				|| frequency.equalsIgnoreCase("WEEKLY") || frequency.equalsIgnoreCase("PERWEEK")
+				|| frequency.equalsIgnoreCase("MONTHLY") || frequency.equalsIgnoreCase("PERMONTH")) {
+			timeKey = timeKey.trim().substring(0, 8);
+			dateFormat = new SimpleDateFormat("yyyyMMdd");
+			requiredDateFormate = new SimpleDateFormat("yyyyMMddHH");
+		}
+		if (finalTimeShiftKeys.equalsIgnoreCase("false")) {
+			requiredDateFormate = new SimpleDateFormat("dd/MM/yyyy");
+		}
+		SimpleDateFormat requiredHourFormate = new SimpleDateFormat("HH:mm");
+		date = dateFormat.parse(timeKey);
+		metaInfo.put("DATE", requiredDateFormate.format(date));
+		metaInfo.put("TIME", requiredHourFormate.format(date));
+		if (frequency.equalsIgnoreCase("MONTHLY") || frequency.equalsIgnoreCase("PERMONTH")) {
+			Calendar calendar = new GregorianCalendar();
+			String dateKey = "";
+			calendar.setTime(date);
+			calendar.set(Calendar.DATE, 01);
+			DateTime dateTime = new DateTime(calendar.getTime());
+			dateKey = dateTime.toString("MMM-yyyy");
+			metaInfo.put("DATE", dateKey);
+		}
+		if (frequency.equalsIgnoreCase("WEEKLY") || frequency.equalsIgnoreCase("PERWEEK")) {
+			String parseWeekWithDate = parseWeekWithDate(date, "ww-yyyy");
+			metaInfo.put("DATE", parseWeekWithDate);
+		}
+		if (!StringUtils.isEmpty(beaconHeader)) {
+			metaInfo.put("DL1", beaconHeader);
+		}
+		return metaInfo;
+	}
+
+	public static String parseWeekWithDate(Date startDate, String format) {
+		List<String> finaldateKey = new ArrayList<>();
+		String dateKey = "";
+		Calendar calendar = new GregorianCalendar();
+		calendar.setTime(startDate);
+		calendar.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY);
+		DateTime dateTime = new DateTime(calendar.getTime());
+		dateKey = "W" + dateTime.toString(format);
+		calendar.add(Calendar.WEEK_OF_YEAR, 1);
+		return dateKey;
+	}
+
+	public static void main(String[] args) throws ParseException {
+		// String formulaString = "{1005##(5)*((NVL((Cell
+		// Resource.AVAIL_WCELL_EXISTS_IN_RNW_DB.Sum.Sum),720))-(Cell
+		// Resource.AVAIL_WCELL_IN_WO_STATE.Sum.Sum))={12233=Cell
+		// Resource.AVAIL_WCELL_IN_WO_STATE.Sum.Sum, 12232=Cell
+		// Resource.AVAIL_WCELL_EXISTS_IN_RNW_DB.Sum.Sum}, 1004##(5)*((NVL((Cell
+		// Resource.AVAIL_WCELL_EXISTS_IN_RNW_DB.Sum.Sum),720)))={12232=Cell
+		// Resource.AVAIL_WCELL_EXISTS_IN_RNW_DB.Sum.Sum},
+		// 8333##((Cell_Resource.AVAIL_WCELL_EXISTS_IN_RNW_DB.Sum.Sum))+((Cell_Resource.AVAIL_WCELL_EXISTS_IN_RNW_DB.Sum.Sum))={12801=Cell_Resource.AVAIL_WCELL_EXISTS_IN_RNW_DB.Sum.Sum}}";
+		//
+		// String counterKey = "Cell Resource.AVAIL_WCELL_IN_WO_STATE.Sum.Sum";
+		// String value = "20880";
+		// String replaceString = "NVL((" + counterKey + "),";
+		// if (formulaString.contains(replaceString)) {
+		// String replaceWith = "(" + value;
+		// String nvlValue =
+		// StringUtils.substringBefore(StringUtils.substringAfter(formulaString,
+		// replaceString),
+		// ")");
+		// System.out.println("nvlValue : " + nvlValue + "replaceString : " +
+		// replaceString + "formulaString : "
+		// + formulaString + "replaceWith : " + replaceWith);
+		// replaceString = replaceString + nvlValue;
+		// formulaString = StringUtils.replace(formulaString, replaceString,
+		// replaceWith);
+		// logger.info("formulaString inside nvl: {} and replaceString :{} ",
+		// formulaString, replaceString);
+		// }
+	}
+
+	// private Object[] initializeObjectArray(List<String> kpiIds, List<String>
+	// counterIdList, List<String> columnsToSet) {
+	// int size = columnsToSet.size() + kpiIds.size() + counterIdList.size() + 1;
+	// return new Object[size];
+	// }
+	private Object[] initializeObjectArray(List<String> kpiIds, List<String> counterIdList, List<String> columnsToSet) {
+		int size = columnsToSet.size() + kpiIds.size() + counterIdList.size();
+		return new Object[size];
+	}
+
+	private static String getCounterData(Map<String, String> kpiMap, String counterId) {
+		// Clean the counter ID by removing brackets, spaces, and other non-numeric
+		// characters
+		String cleanCounterId = counterId.replaceAll("[\\[\\]\\s]", "");
+		logger.info(
+				"getCounterData - Original Counter ID: {}, Cleaned Counter ID: {}, Map contains key: {}, Map size: {}",
+				counterId, cleanCounterId, kpiMap.containsKey(cleanCounterId), kpiMap.size());
+		try {
+			String value = String.valueOf(kpiMap.get(cleanCounterId));
+			logger.info("getCounterData - Counter ID: {}, Raw Value: {}", cleanCounterId, value);
+			if (!StringUtils.isEmpty(value) && !value.equalsIgnoreCase("null")) {
+				if (value.contains(AVERAGE_VALUE_SPLITTER)) {
+					String result = Double.valueOf(
+							new DecimalFormat("##.####").format(Double.valueOf(value.split(AVERAGE_VALUE_SPLITTER)[1])))
+							.toString();
+					logger.info("getCounterData - Counter ID: {}, Final Value (AVERAGE): {}", cleanCounterId, result);
+					return result;
+				}
+				if (value.contains(COUNT_SPLITTER)) {
+					String result = Double
+							.valueOf(new DecimalFormat("##.####")
+									.format(Double.valueOf(StringUtils.substringAfter(value, COUNT_SPLITTER))))
+							.toString();
+					logger.info("getCounterData - Counter ID: {}, Final Value (COUNT): {}", cleanCounterId, result);
+					return result;
+				} else {
+					String result = Double.valueOf(new DecimalFormat("##.####").format(Double.valueOf(value)))
+							.toString();
+					logger.info("getCounterData - Counter ID: {}, Final Value (DEFAULT): {}", cleanCounterId, result);
+					return result;
+				}
+			}
+		} catch (Exception e) {
+			logger.error("Exception in getting counter data for {}: {}", cleanCounterId,
+					ExceptionUtils.getStackTrace(e));
+		}
+		logger.info("getCounterData - Counter ID: {}, Returning hyphen", cleanCounterId);
+		return Symbol.HYPHEN_STRING;
+	}
+
+	private Object[] getValueMapFromResult(Map<String, String> metaMap, Map<String, String> kpiMap,
+			List<String> columnsToSet, Object[] resultArray, int arrayIndex, Map<String, String> rowDataFinalMap,
+			List<String> kpiIds, List<String> counterIdList) {
+
+		for (String column : columnsToSet) {
+
+			if (column.contains("nodename")) {
+				column = "NAM";
+			}
+			String value = getValue(metaMap, column);
+			value = column.equalsIgnoreCase("T") && !value.contains("LTE") ? value.replaceAll("T", "") : value;
+
+			if (column.equalsIgnoreCase("country")) {
+				value = "INDIA";
+			}
+			if (column.equalsIgnoreCase("DL1") && value.equalsIgnoreCase("INDIA")) {
+				value = "-";
+			}
+
+			logger.info("Processing column: {}, Value: {}", column, value);
+
+			resultArray[arrayIndex++] = value;
+		}
+		// String value = getValue(metaMap, "moHeirachy");
+		// resultArray[arrayIndex++] = value;
+		for (String column : kpiIds) {
+			resultArray[arrayIndex++] = getKPIValueAsDouble(kpiMap, column);
+		}
+		logger.info("Processing counter IDs: {}", counterIdList);
+		for (String column : counterIdList) {
+			logger.info("Processing counter column: {}", column);
+			resultArray[arrayIndex++] = getCounterData(rowDataFinalMap, column);
+		}
+		return resultArray;
+	}
+
+	public static String getKPIValueAsDouble(Map<String, String> kpiMap, String kpiId) {
+		// Clean the KPI ID by removing brackets, spaces, and other non-numeric
+		// characters
+		String cleanKpiId = kpiId.replaceAll("[\\[\\]\\s]", "");
+		String kpiValueString = getValue(kpiMap, cleanKpiId);
+		logger.info(
+				"getKPIValueAsDouble - Original KPI ID: {}, Cleaned KPI ID: {}, Raw Value: {}, kpiMap contains key: {}",
+				kpiId, cleanKpiId, kpiValueString, kpiMap.containsKey(cleanKpiId));
+		String kpiValue = Symbol.HYPHEN_STRING;
+		if (kpiValueString != null && isNumeric(kpiValueString)) {
+			if (Double.isNaN(Double.valueOf(kpiValueString)) || Double.isInfinite(Double.valueOf(kpiValueString))) {
+				kpiValue = Symbol.HYPHEN_STRING;
+			} else {
+				kpiValue = Double.valueOf(new DecimalFormat("##.####").format(Double.valueOf(kpiValueString)))
+						.toString();
+			}
+		}
+		logger.info("getKPIValueAsDouble - KPI ID: {}, Final Value: {}", cleanKpiId, kpiValue);
+		return kpiValue;
+	}
+
+	public static boolean isNumeric(String str) {
+		try {
+			Double.parseDouble(str);
+		} catch (NumberFormatException nfe) {
+			return false;
+		}
+		return true;
+	}
+
+	private static String getValue(Map<String, String> metaMap, String column) {
+		String value = metaMap.get(column);
+		if (value != null) {
+			return value;
+		}
+		return Symbol.HYPHEN_STRING;
+	}
+
+	public static String VALUE_SPLITTER_LAST = "@LAST";
+
+	private String createExpression(String formulaString, String counterKey, String value) {
+		String replaceString3Bracket = "NVL(((" + counterKey + ")),";
+		String replaceString = "NVL((" + counterKey + "),";
+		if (formulaString.contains(replaceString3Bracket)) {
+			String replaceWith = "(" + value;
+			String nvlValue = StringUtils
+					.substringBefore(StringUtils.substringAfter(formulaString, replaceString3Bracket), ")");
+			replaceString3Bracket = replaceString3Bracket + nvlValue;
+			formulaString = StringUtils.replace(formulaString, replaceString3Bracket, replaceWith);
+		}
+		if (formulaString.contains(replaceString)) {
+			String replaceWith = "(" + value;
+			String nvlValue = StringUtils.substringBefore(StringUtils.substringAfter(formulaString, replaceString),
+					")");
+			replaceString = replaceString + nvlValue;
+			formulaString = StringUtils.replace(formulaString, replaceString, replaceWith);
+		}
+		formulaString = StringUtils.replace(formulaString, counterKey, value);
+		return formulaString;
+	}
+
+	public Map<String, String> getUpdateValueByKpi(Map<String, String> exceptionalKpiMap, Map<String, String> kpiMap) {
+		Map<String, String> exceptionalKpiMap1 = new THashMap<>();
+		logger.info("getUpdateValueByKpi - Processing {} exceptional KPIs", exceptionalKpiMap.size());
+		for (Entry<String, String> counterEntry : exceptionalKpiMap.entrySet()) {
+			String counterKey = counterEntry.getKey();
+			String formulaeString = counterEntry.getValue();
+			logger.info("getUpdateValueByKpi - Processing KPI: {}, Formula: {}", counterKey, formulaeString);
+			String[] array = formulaeString.split(KPI_NAMESPLIT);
+			int count = 0;
+			try {
+				for (String arr : array) {
+					count++;
+					if (count > 1) {
+
+						formulaeString = getUpdateFormulaString(kpiMap, formulaeString, arr);
+					}
+
+				}
+				if (formulaeString.contains("HEXTODEC")) {
+					formulaeString = getFunctionsVal(formulaeString, "HEXTODEC");
+				}
+				if (formulaeString.contains("DECTOHEX")) {
+					formulaeString = getFunctionsVal(formulaeString, "DECTOHEX");
+				}
+				formulaeString = StringUtils.replace(formulaeString, "{", "(");
+				formulaeString = StringUtils.replace(formulaeString, "}", ")");
+				logger.info("getUpdateValueByKpi - Final formula before evaluation: {}", formulaeString);
+				com.enttribe.sparkrunner.util.Expression expression1 = new com.enttribe.sparkrunner.util.Expression(
+						formulaeString, true);
+				String kpiValue = expression1.eval();
+				logger.info("getUpdateValueByKpi - KPI: {}, Calculated Value: {}", counterKey, kpiValue);
+				kpiMap.put(counterKey, kpiValue);
+			} catch (Exception e) {
+				logger.error("getUpdateValueByKpi - Exception evaluating KPI {}: {}", counterKey, e.getMessage());
+				// logger.info("Exception getting After Evaluating expression : {}",
+				// e.getMessage());
+				if (e.getMessage() != null && (e.getMessage().equalsIgnoreCase(DIVISION_BY_ZERO)
+						|| e.getMessage().equalsIgnoreCase(Division_undefined))) {
+					Double kpiValue = Double.NaN;
+					kpiMap.put(counterKey, String.valueOf(kpiValue));
+				} else {
+					exceptionalKpiMap1.put(counterKey, formulaeString);
+				}
+			}
+		}
+		kpiMap = getUpdateValueByKpi1(exceptionalKpiMap1, kpiMap);
+		return kpiMap;
+	}
+
+	private String getUpdateFormulaString(Map<String, String> kpiMap, String formulaString, String arr) {
+		String kpiId = "";
+		String newKPINameSplit = "";
+		if (arr.contains("TimeShift")) {
+			String[] split = arr.split("TimeShift");
+			kpiId = split[0] + "TimeShift" + StringUtils.substringBefore(split[1], ")");
+			newKPINameSplit = Symbol.PARENTHESIS_OPEN_STRING + "KPI#";
+		} else {
+			kpiId = StringUtils.substringBefore(arr, Symbol.PARENTHESIS_CLOSE_STRING);
+			newKPINameSplit = "KPI#";
+		}
+		logger.info("getUpdateFormulaString - Processing arr: {}, kpiId: {}, kpiMap contains key: {}",
+				arr, kpiId, kpiMap.containsKey(kpiId));
+		String kpiValue = String.format("%f", Double.valueOf(kpiMap.get(kpiId)));
+		logger.info("getUpdateFormulaString - kpiValue: {}", kpiValue);
+		if (!kpiValue.equalsIgnoreCase("null") && !kpiValue.equalsIgnoreCase(null)) {
+			formulaString = StringUtils.replaceOnce(formulaString, newKPINameSplit + kpiId, kpiValue);
+		}
+		return formulaString;
+	}
+
+	private static String getUpdateFormulaString1(Map<String, String> kpiMap, String formulaString, String arr) {
+		String kpiValue;
+		String newKPINameSplit = "";
+		String kpiId = "";
+		if (arr.contains("TimeShift")) {
+			String[] split = arr.split("TimeShift");
+			kpiId = split[0] + "TimeShift" + StringUtils.substringBefore(split[1], ")");
+			newKPINameSplit = Symbol.PARENTHESIS_OPEN_STRING + "KPI#";
+			kpiValue = String.format("%f", Double.valueOf(kpiMap.get(kpiId)));
+		} else {
+			kpiId = StringUtils.substringBefore(arr, Symbol.PARENTHESIS_CLOSE_STRING);
+			newKPINameSplit = "KPI#";
+			kpiValue = String.format(FORMATE_STRING,
+					Double.valueOf(kpiMap.get(String.valueOf(Integer.valueOf(kpiId)))));
+		}
+		logger.info("getUpdateFormulaString1 - Processing arr: {}, kpiId: {}, kpiValue: {}", arr, kpiId, kpiValue);
+		if (!kpiValue.equalsIgnoreCase("null") && !kpiValue.equalsIgnoreCase(null)) {
+			formulaString = StringUtils.replaceOnce(formulaString, newKPINameSplit + kpiId, kpiValue);
+		}
+		return formulaString;
+	}
+
+	public String getPreComputeExpBtwBrackets(String formulaeString, String function) {
+		String preComputeExp = StringUtils.substringAfter(formulaeString, function + "(");
+		if (preComputeExp.indexOf("(") > 0) {
+			while (preComputeExp.indexOf("(") < preComputeExp.indexOf(")")) {
+				preComputeExp = preComputeExp.replaceFirst("\\(", "\\{").replaceFirst("\\)", "\\}");
+				if (preComputeExp.indexOf("(") < 0)
+					break;
+			}
+		}
+		preComputeExp = StringUtils.substringBefore(preComputeExp, ")");
+		preComputeExp = preComputeExp.replaceAll("\\{", "(").replaceAll("\\}", ")");
+
+		return preComputeExp;
+	}
+
+	public String getFunctionsVal(String formulaeString, String function) {
+		while (formulaeString.contains(function)) {
+			String preComputeExp = getPreComputeExpBtwBrackets(formulaeString, function);
+			com.enttribe.sparkrunner.util.Expression preComputeExpression = new com.enttribe.sparkrunner.util.Expression(
+					preComputeExp, true);
+			String kpiValuePreComputeExp = preComputeExpression.eval();
+
+			formulaeString = StringUtils.replace(formulaeString, function + "(" + preComputeExp + ")",
+					function + "(" + kpiValuePreComputeExp + ")");
+			String formulaeFuncStr = function + "("
+					+ StringUtils.substringBefore(StringUtils.substringAfter(formulaeString, function + "("), ")")
+					+ ")";
+			String formulaeFunc = function + "("
+					+ StringUtils.substringBefore(StringUtils
+							.substringBefore(StringUtils.substringAfter(formulaeString, function + "("), ")"), ".")
+					+ ")";
+			com.enttribe.sparkrunner.util.Expression expression1 = new com.enttribe.sparkrunner.util.Expression(
+					formulaeFunc,
+					true);
+			String kpiValueFunc = expression1.eval();
+			formulaeString = StringUtils.replace(formulaeString, formulaeFuncStr, kpiValueFunc);
+		}
+		return formulaeString;
+	}
+
+	public static Map<String, String> getUpdateValueByKpi1(Map<String, String> exceptionalKpiMap,
+			Map<String, String> kpiMap) {
+		logger.info("getUpdateValueByKpi1 - Processing {} exceptional KPIs", exceptionalKpiMap.size());
+		for (Entry<String, String> counterEntry : exceptionalKpiMap.entrySet()) {
+			String counterKey = counterEntry.getKey();
+			String formulaeString = counterEntry.getValue();
+			logger.info("getUpdateValueByKpi1 - Processing KPI: {}, Formula: {}", counterKey, formulaeString);
+			String[] array = formulaeString.split(KPI_NAMESPLIT);
+			int count = 0;
+			try {
+				for (String arr : array) {
+					count++;
+					if (count > 1) {
+
+						formulaeString = getUpdateFormulaString1(kpiMap, formulaeString, arr);
+					}
+				}
+				logger.info("getUpdateValueByKpi1 - Final formula before evaluation: {}", formulaeString);
+				com.enttribe.sparkrunner.util.Expression expression1 = new com.enttribe.sparkrunner.util.Expression(
+						formulaeString, true);
+				String kpiValue = expression1.eval();
+				logger.info("getUpdateValueByKpi1 - KPI: {}, Calculated Value: {}", counterKey, kpiValue);
+				kpiMap.put(counterKey, kpiValue);
+			} catch (Exception e) {
+				logger.error("getUpdateValueByKpi1 - Exception evaluating KPI {}: {}", counterKey, e.getMessage());
+				if (e.getMessage() != null) {
+					Double kpiValue = Double.NaN;
+					kpiMap.put(counterKey, String.valueOf(kpiValue));
+				}
+			}
+		}
+		return kpiMap;
+	}
+
+	private void getPossibleTimeShiftKPIWiseMap(Map<String, Map<String, String>> kpiWiseCounterMap,
+			List<String> commonSubKpiListForTimeShift, Entry<String, Map<String, String>> kpiWiseCounter,
+			String kpiCode, String kpiDesc) {
+		for (String subkpiList : commonSubKpiListForTimeShift) {
+			int count = 0;
+			if (subkpiList.contains("timeShift") && subkpiList.contains(kpiCode)) {
+				if (!subkpiList.contains(")")) {
+					subkpiList = subkpiList + ")";
+				}
+				String timeShift = subkpiList.split("\\.")[1];
+				String temp = kpiDesc;
+				String[] splitDesc = temp.split("KPI#");
+				for (String string : splitDesc) {
+					count++;
+					if (string.contains("))") && count > 1) {
+						String before = StringUtils.substringBefore(string, "))");
+						String latest = before + "." + timeShift;
+						temp = StringUtils.replace(temp, before, latest);
+					}
+				}
+				kpiWiseCounterMap.put(subkpiList + "##" + temp, kpiWiseCounter.getValue());
+			}
+		}
+	}
+
+	@Override
+	public String getName() {
+		return "KPIEvaluator";
+	}
+
+	@Override
+	public DataType getReturnType() {
+		List<StructField> fields = new ArrayList<>();
+		Map<String, String> contextMap = jobcontext.getParameters();
+		// String metaColumns =
+		// StringUtils.substringBefore(contextMap.get("finalMetaColumns"),
+		// Symbol.HASH_STRING);
+		String metaColumns = "DATE,TIME,L1,L2,L3,L4,PARENT_ENTITY_NAME,PARENT_ENTITY_ID,PARENT_ENTITY_TYPE,ENTITY_STATUS,ENTITY_ID,ENTITY_NAME";
+		fields.addAll(addStrunctMetaColumnField(metaColumns));
+		// fields.add(DataTypes.createStructField("moHeirachy", DataTypes.StringType,
+		// true));
+		List<String> kpiList = new ArrayList<>();
+		List<String> counterList = new ArrayList<>();
+		// String kpiCodeList = contextMap.get("KPI_CODE_LIST");
+		// String counterIdList = contextMap.get("COUNTER_ID_LIST");
+
+		String kpiCodeCommaSeparated = contextMap.get("KPI_CODE_COMMA_SEPARATED");
+		String counterIdCommaSeparated = contextMap.get("COUNTER_ID_COMMA_SEPARATED");
+
+		String[] kpiCodeArray = kpiCodeCommaSeparated.split(",");
+		String[] counterIdArray = counterIdCommaSeparated.split(",");
+		for (String kpiCode : kpiCodeArray) {
+			kpiList.add(kpiCode.trim());
+		}
+		for (String counterId : counterIdArray) {
+			counterList.add(counterId.trim());
+		}
+
+		// kpiCodeList = kpiCodeList.replaceAll("\\[", "").replaceAll("\\]", "");
+		// counterIdList = counterIdList.replaceAll("\\[", "").replaceAll("\\]", "");
+		// kpiList = Arrays.asList(kpiCodeList.split(","));
+		// counterList = Arrays.asList(counterIdList.split(","));
+		// setKPIsAndCounterList(contextMap.get("kpi"), kpiList, counterList);
+		fields.addAll(addStrunctKPIField(kpiList));
+		fields.addAll(addStrunctKPIField(counterList));
+		return DataTypes.createStructType(fields);
+	}
+
+	private List<StructField> addStrunctMetaColumnField(String columns) {
+		List<StructField> fields = new ArrayList<>();
+		if (!StringUtils.isEmpty(columns)) {
+			for (String column : columns.split(Symbol.COMMA_STRING)) {
+				fields.add(DataTypes.createStructField(column, DataTypes.StringType, true));
+			}
+		}
+		return fields;
+	}
+
+	private List<StructField> addStrunctKPIField(List<String> columns) {
+		List<StructField> fields = new ArrayList<>();
+		int columnIndex = 0;
+		for (String column : columns) {
+			if (!StringUtils.isEmpty(column))
+				// fields.add(DataTypes.createStructField(column + Symbol.HASH_STRING +
+				// columnIndex++,
+				// DataTypes.StringType, true));
+				fields.add(DataTypes.createStructField(column, DataTypes.StringType, true));
+		}
+		return fields;
+	}
+}

@@ -1,0 +1,207 @@
+package com.enttribe.pm.job.quarterly.juniper;
+
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.TimeZone;
+
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.RowFactory;
+import org.apache.spark.sql.api.java.UDF4;
+import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructField;
+import org.json.JSONObject;
+
+import com.enttribe.sparkrunner.context.JobContext;
+import com.enttribe.sparkrunner.udf.AbstractUDF;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+public class JuniperParserForDelta implements UDF4<String, String, byte[], Boolean, List<Row>>, AbstractUDF {
+
+    private static final long serialVersionUID = 1L;
+    public JobContext jobcontext;
+    private static final String CATEGORY_VS_DELTACOUNTER = "CATEGORY_VS_DELTACOUNTER";
+    private static Map<String, List<String>> categoryVSDetla = null;
+    private static Object SYNCHRONIZER = new Object();
+
+    private static final String TIME_ZONE = "UTC";
+    private static final String DATE_FORMAT = "yyyyMMddHHmmss";
+    private static final int QUARTER_DURATION_MINUTES = 15;
+    private static final String DEFAULT_CATEGORY = "N/A";
+    private static final String DEFAULT_TIME_STRING = "0000";
+
+    public JuniperParserForDelta(JobContext jobContext) {
+        this.jobcontext = jobContext;
+    }
+
+    public JuniperParserForDelta() {
+    }
+
+    private void getCategoryVsDeltaCounterMap() {
+
+        if (categoryVSDetla == null) {
+            synchronized (SYNCHRONIZER) {
+                if (categoryVSDetla == null) {
+
+                    System.out.println("Initializing Category Vs Delta Counter Map");
+
+                    String parameter = jobcontext.getParameter(CATEGORY_VS_DELTACOUNTER);
+                    ObjectMapper mapper = new ObjectMapper();
+
+                    try {
+
+                        categoryVSDetla = mapper.readValue(parameter, new TypeReference<Map<String, List<String>>>() {
+                        });
+
+                         System.out.println("Category Vs Delta Counter Map Initialized Successfully. Size: " +
+                                categoryVSDetla.size());
+
+                    } catch (Exception e) {
+                        System.err.println("Error Initializing Category Vs Delta Counter Map: " + e.getMessage());
+                        e.printStackTrace();
+                    }
+
+                }
+            }
+        }
+    }
+
+    public static void main(String[] args) {
+
+        String zipFilePath = "/performance/JOB/RawFiles/JUNIPER/20250721/0945/raw_data.zip";
+        String fileName = "sample-juniper.json";
+
+        try {
+            byte[] jsonContent = Files
+                    .readAllBytes(Paths.get("/Users/ent-00356/Downloads/sample-juniper.json"));
+
+            List<Row> rowList = new JuniperParserForDelta().call(zipFilePath, fileName,
+                    jsonContent, false);
+            System.out.println("Total Records Processed: " + rowList.size());
+
+        } catch (Exception e) {
+            System.err.println("Exception Occured In Call Method : " + e.getMessage());
+        }
+    }
+
+    @Override
+    public List<Row> call(String zipFilePath, String fileName, byte[] jsonContent, Boolean isDelta) throws Exception {
+        System.out.println("Processing File: " + fileName + " With " + jsonContent.length + " Bytes");
+
+        final List<Row> fileContent = new ArrayList<>();
+        final String jsonString = new String(jsonContent);
+        final String[] lines = jsonString.split("\n");
+
+        int index = 1;
+        if (isDelta) {
+            System.out.println("Delta Mode Enabled: Loading Category Counter Map!");
+            getCategoryVsDeltaCounterMap();
+        } else {
+            System.out.println("Delta Mode Disabled: Processing All Counters!");
+        }
+        for (final String line : lines) {
+            try {
+                final JSONObject mainJSONObject = new JSONObject(line);
+                final String processingTime = getProcessedTimeFromZipFilePath(zipFilePath);
+                String category = mainJSONObject.optString("name", DEFAULT_CATEGORY).toUpperCase();
+                final JSONObject tagObject = mainJSONObject.getJSONObject("tags");
+                String pmemsid = tagObject.getString("router_ip");
+
+                final Map<String, String> counterValueMap = new HashMap<>();
+                if (pmemsid != null) {
+                    try {
+                        final String interfaceDesc = tagObject.getString("ifDescr");
+                        counterValueMap.put("INTERFACE_DESC", interfaceDesc);
+                        final String extractedInterfaceDesc = interfaceDesc.split(",")[0];
+                        if (extractedInterfaceDesc != null) {
+                            pmemsid = pmemsid + "_" + extractedInterfaceDesc;
+                        }
+                    } catch (Exception e) {
+                        System.err.println("Error Getting Interface Description: " + e.getMessage());
+                    }
+                }
+
+                final Long timestampFromFile = mainJSONObject.getLong("timestamp");
+                System.out.println("Timestamp From File: " + timestampFromFile);
+                final String dateTime = getQuarterlyDateTime(timestampFromFile);
+                System.out.println("Date Time: " + dateTime);
+
+                final JSONObject fieldsJSONObject = mainJSONObject.getJSONObject("fields");
+                if (isDelta && categoryVSDetla != null && categoryVSDetla.containsKey(category)) {
+                    final List<String> counterList = categoryVSDetla.get(category);
+                    for (final String key : fieldsJSONObject.keySet()) {
+                        final Object value = fieldsJSONObject.get(key);
+                        if (counterList.contains(key.toUpperCase()) && value != null
+                                && !"null".equals(value.toString()) && !"".equals(value.toString())) {
+                            counterValueMap.put(key.trim().toUpperCase(), String.valueOf(value));
+                        }
+                    }
+                } else if (!isDelta) {
+                    for (final String key : fieldsJSONObject.keySet()) {
+                        final Object value = fieldsJSONObject.get(key);
+                        counterValueMap.put(key.trim().toUpperCase(), String.valueOf(value));
+                    }
+                }
+                final String key = category + "##" + pmemsid + "##" + dateTime + "##" + index;
+                fileContent.add(RowFactory.create(processingTime, key, counterValueMap));
+                index++;
+            } catch (Exception e) {
+                System.err.println("Error Processing JSON Line: " + e.getMessage());
+            }
+        }
+        return fileContent;
+    }
+
+    private static String getQuarterlyDateTime(Long epochSeconds) {
+        Calendar calendar = Calendar.getInstance(TimeZone.getTimeZone(TIME_ZONE));
+        calendar.setTimeInMillis(epochSeconds * 1000L);
+
+        int minute = calendar.get(Calendar.MINUTE);
+        int flooredMinute = (minute / QUARTER_DURATION_MINUTES) * QUARTER_DURATION_MINUTES;
+
+        calendar.set(Calendar.MINUTE, flooredMinute);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+
+        SimpleDateFormat formatter = new SimpleDateFormat(DATE_FORMAT);
+        formatter.setTimeZone(TimeZone.getTimeZone(TIME_ZONE));
+        return formatter.format(calendar.getTime());
+    }
+
+    private String getProcessedTimeFromZipFilePath(String zipFilePath) {
+        try {
+            String[] parts = zipFilePath.split("/");
+            if (parts.length > 2) {
+                String processedTime = parts[parts.length - 2];
+                if (processedTime.matches("\\d{4}")) {
+                    return processedTime;
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error Extracting Time From File Path: " + e.getMessage());
+        }
+        return DEFAULT_TIME_STRING;
+    }
+
+    @Override
+    public String getName() {
+        return "JuniperParser";
+    }
+
+    @Override
+    public DataType getReturnType() {
+        List<StructField> fields = new ArrayList<>();
+        fields.add(DataTypes.createStructField("PT", DataTypes.StringType, true));
+        fields.add(DataTypes.createStructField("mapKey", DataTypes.StringType, true));
+        fields.add(DataTypes.createStructField("counterValueMap",
+                DataTypes.createMapType(DataTypes.StringType, DataTypes.StringType, true), true));
+        return DataTypes.createArrayType(DataTypes.createStructType(fields));
+    }
+}

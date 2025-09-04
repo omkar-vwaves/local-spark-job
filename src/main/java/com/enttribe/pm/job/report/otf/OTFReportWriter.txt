@@ -1,0 +1,872 @@
+package com.enttribe.pm.job.report.otf;
+
+import com.amazonaws.ClientConfiguration;
+import com.amazonaws.auth.AWSCredentials;
+import com.amazonaws.auth.AWSStaticCredentialsProvider;
+import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.client.builder.AwsClientBuilder.EndpointConfiguration;
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.AmazonS3ClientBuilder;
+import com.amazonaws.services.s3.model.ListObjectsV2Result;
+import com.amazonaws.services.s3.model.ObjectMetadata;
+import com.amazonaws.services.s3.model.S3ObjectSummary;
+import com.enttribe.sparkrunner.context.JobContext;
+
+import com.enttribe.sparkrunner.processors.Processor;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.InputStream;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.Map;
+import java.util.UUID;
+
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.FillPatternType;
+import org.apache.poi.ss.usermodel.HorizontalAlignment;
+import org.apache.poi.ss.usermodel.IndexedColors;
+import org.apache.poi.ss.usermodel.VerticalAlignment;
+import org.apache.poi.xssf.usermodel.XSSFSheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.SaveMode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.*;
+
+import org.apache.commons.io.FileUtils;
+
+import java.io.*;
+import org.apache.poi.xssf.usermodel.XSSFRow;
+
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.ss.util.CellRangeAddress;
+import org.apache.poi.xssf.usermodel.*;
+
+public class OTFReportWriter extends Processor {
+
+    private static final Logger logger = LoggerFactory.getLogger(OTFReportWriter.class);
+    private static String SPARK_MINIO_ENDPOINT_URL = "SPARK_MINIO_ENDPOINT_URL";
+    private static String SPARK_MINIO_ACCESS_KEY = "SPARK_MINIO_ACCESS_KEY";
+    private static String SPARK_MINIO_SECRET_KEY = "SPARK_MINIO_SECRET_KEY";
+    private static String SPARK_MINIO_BUCKET_NAME_PM = "SPARK_MINIO_BUCKET_NAME_PM";
+
+    public OTFReportWriter() {
+        super();
+        logger.info("OTFReportWriter No Argument Constructor Called!");
+    }
+
+    public OTFReportWriter(Dataset<Row> dataframe, Integer id, String processorName) {
+        super(id, processorName);
+        this.dataFrame = dataframe;
+        logger.info("OTFReportWriter Constructor Called with Input DataFrame With ID: {} and Processor Name: {}", id,
+                processorName);
+    }
+
+    public OTFReportWriter(Integer id, String processorName) {
+        super(id, processorName);
+        logger.info("OTFReportWriter Constructor Called with ID: {} and Processor Name: {}", id, processorName);
+    }
+
+    @Override
+    public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) throws Exception {
+        logger.info("[OTFReportWriter] Execution Started!");
+
+        long startTime = System.currentTimeMillis();
+
+        Map<String, String> jobContextMap = jobContext.getParameters();
+
+        SPARK_MINIO_ENDPOINT_URL = jobContextMap.get("SPARK_MINIO_ENDPOINT_URL");
+        SPARK_MINIO_ACCESS_KEY = jobContextMap.get("SPARK_MINIO_ACCESS_KEY");
+        SPARK_MINIO_SECRET_KEY = jobContextMap.get("SPARK_MINIO_SECRET_KEY");
+        SPARK_MINIO_BUCKET_NAME_PM = jobContextMap.get("SPARK_MINIO_BUCKET_NAME_PM");
+
+        logger.info("MinIO Credentials: Endpoint={}, AccessKey={}, SecretKey={}, BucketName={}",
+                SPARK_MINIO_ENDPOINT_URL, SPARK_MINIO_ACCESS_KEY, SPARK_MINIO_SECRET_KEY, SPARK_MINIO_BUCKET_NAME_PM);
+
+        String extraParameters = jobContextMap.get("EXTRA_PARAMETERS");
+        String reportWidgetDetails = jobContextMap.get("REPORT_WIDGET_DETAILS");
+        String ragConfiguration = jobContextMap.get("RAG_CONFIGURATION");
+
+        if (reportWidgetDetails == null) {
+            throw new Exception(
+                    "REPORT_WIDGET_DETAILS is NULL. Please Ensure Input DataFrame is Properly Initialized Before Processing.");
+        }
+
+        if (extraParameters == null) {
+            throw new Exception(
+                    "EXTRA_PARAMETERS is NULL. Please Ensure Extra Parameters is Properly Initialized Before Processing.");
+        }
+
+        Map<String, String> extraParametersMap = new ObjectMapper().readValue(extraParameters,
+                new TypeReference<Map<String, String>>() {
+                });
+
+        Map<String, String> reportWidgetDetailsMap = new ObjectMapper().readValue(reportWidgetDetails,
+                new TypeReference<Map<String, String>>() {
+                });
+
+        Map<String, Map<String, String>> ragConfigurationMap = new ObjectMapper().readValue(ragConfiguration,
+                new TypeReference<Map<String, Map<String, String>>>() {
+                });
+
+        logger.info("RAG Configuration: {}", ragConfigurationMap);
+
+        String reportWidgetIdPk = reportWidgetDetailsMap.get("REPORT_WIDGET_ID_PK");
+        jobContext.setParameters("REPORT_WIDGET_ID_PK", reportWidgetIdPk);
+        logger.info("REPORT_WIDGET_ID_PK '{}' Set to Job Context Successfully!", reportWidgetIdPk);
+
+        String generatedReportId = reportWidgetDetailsMap.get("GENERATED_REPORT_ID");
+        jobContext.setParameters("GENERATED_REPORT_ID", generatedReportId);
+        logger.info("GENERATED_REPORT_ID '{}' Set to Job Context Successfully!", generatedReportId);
+
+        String reportFileName = getReportFileName(jobContextMap, extraParametersMap, reportWidgetDetailsMap);
+        logger.info("Report File Name: {}", reportFileName);
+
+        Dataset<Row> expectedDF = this.dataFrame;
+
+        String reportFormatType = extraParametersMap.get("REPORT_FORMAT_TYPE");
+
+        if (reportFormatType == null) {
+            throw new Exception(
+                    "REPORT_FORMAT_TYPE is NULL. Please Ensure Report Format Type is Properly Set.");
+        }
+
+        logger.info("Report Format Type: {}", reportFormatType);
+
+        if (reportFormatType.equalsIgnoreCase("csv")) {
+            processCSVReport(expectedDF, extraParametersMap, jobContext, reportFileName);
+        } else if (reportFormatType.equalsIgnoreCase("excel")) {
+            processExcelReport(expectedDF, extraParametersMap, jobContext, reportFileName, ragConfigurationMap);
+        } else {
+            throw new Exception("REPORT_FORMAT_TYPE is Invalid. Please Ensure Input Report Format is Properly Set.");
+        }
+
+        long endTime = System.currentTimeMillis();
+        long durationMillis = endTime - startTime;
+        long minutes = durationMillis / 60000;
+        long seconds = (durationMillis % 60000) / 1000;
+
+        logger.info("[OTFReportWriter] Execution Completed! Time Taken: {} Minutes | {} Seconds", minutes, seconds);
+
+        return this.dataFrame;
+    }
+
+    private static void processCSVReport(Dataset<Row> expectedDF, Map<String, String> extraParametersMap,
+            JobContext jobContext, String reportFileName) {
+
+        String bucketName = SPARK_MINIO_BUCKET_NAME_PM;
+        String minioEndpointUrl = SPARK_MINIO_ENDPOINT_URL;
+        String minioAccessKey = SPARK_MINIO_ACCESS_KEY;
+        String minioSecretKey = SPARK_MINIO_SECRET_KEY;
+        String minioRegion = "us-east-1";
+
+        String pushedDate = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String tmpMinioDirPath = "protected/PM/FlowReport/tmp/" + UUID.randomUUID(); // Spark will write here
+        String finalMinioPath = "protected/PM/FlowReport/" + pushedDate + "/" + reportFileName;
+
+        String reportWidgetFilePath = reportFileName;
+        jobContext.setParameters("REPORT_WIDGET_FILE_PATH", reportWidgetFilePath);
+        logger.info("REPORT_WIDGET_FILE_PATH '{}' Set to Job Context Successfully!", reportWidgetFilePath);
+
+        String generatedReportFilePath = "/" + finalMinioPath;
+        jobContext.setParameters("GENERATED_REPORT_FILE_PATH", generatedReportFilePath);
+        logger.info("GENERATED_REPORT_FILE_PATH '{}' Set to Job Context Successfully!", generatedReportFilePath);
+
+        AmazonS3 s3client = null;
+
+        try {
+            logger.info("Step 1: Writing CSV to MinIO Temporary Path: {}", tmpMinioDirPath);
+            expectedDF.coalesce(1)
+                    .write()
+                    .option("header", "true")
+                    .option("delimiter", ",")
+                    .option("quote", "\"")
+                    .option("escape", "\\")
+                    .option("nullValue", "")
+                    .mode(SaveMode.Overwrite)
+                    .csv("s3a://" + bucketName + "/" + tmpMinioDirPath);
+
+            logger.info("CSV File Written Successfully to MinIO Temporary Path");
+
+            logger.info("Step 2: Creating MinIO S3 Client");
+
+            AWSCredentials credentials = new BasicAWSCredentials(minioAccessKey, minioSecretKey);
+            ClientConfiguration clientConfiguration = new ClientConfiguration();
+            clientConfiguration.setSignerOverride("AWSS3V4SignerType");
+            clientConfiguration.setConnectionTimeout(30000);
+            clientConfiguration.setSocketTimeout(30000);
+
+            s3client = AmazonS3ClientBuilder.standard()
+                    .withEndpointConfiguration(new EndpointConfiguration(minioEndpointUrl, minioRegion))
+                    .withPathStyleAccessEnabled(true)
+                    .withClientConfiguration(clientConfiguration)
+                    .withCredentials(new AWSStaticCredentialsProvider(credentials))
+                    .build();
+
+            logger.info("MinIO S3 Client Created Successfully");
+
+            logger.info("Step 3: Listing Files Under MinIO Temporary Path");
+            ListObjectsV2Result result = s3client.listObjectsV2(bucketName, tmpMinioDirPath + "/");
+            S3ObjectSummary targetFile = result.getObjectSummaries()
+                    .stream()
+                    .filter(obj -> obj.getKey().contains("part-") && obj.getKey().endsWith(".csv"))
+                    .findFirst()
+                    .orElseThrow(() -> new FileNotFoundException("No part CSV file found in: " + tmpMinioDirPath));
+
+            logger.info("Found Spark Part File in MinIO: {}", targetFile.getKey());
+
+            String fileSize = String.valueOf(targetFile.getSize());
+            jobContext.setParameters("FILE_SIZE", fileSize);
+            logger.info("FILE_SIZE '{}' Set to Job Context Successfully!", fileSize);
+
+            logger.info("Step 4: Copying to Final MinIO Path: {}", finalMinioPath);
+            s3client.copyObject(bucketName, targetFile.getKey(), bucketName, finalMinioPath);
+            logger.info("CSV File Copied Successfully to Final Path");
+
+            if (!s3client.doesObjectExist(bucketName, finalMinioPath)) {
+                throw new RuntimeException("Failed to Verify Final File Exists: " + finalMinioPath);
+            }
+
+            logger.info("Step 5: Deleting Temporary Files from MinIO");
+            for (S3ObjectSummary obj : result.getObjectSummaries()) {
+                s3client.deleteObject(bucketName, obj.getKey());
+            }
+            logger.info("Temporary MinIO Objects Deleted Successfully");
+
+            logger.info("CSV Report Uploaded Successfully!");
+            logger.info("Final file location: {}/{}", bucketName, finalMinioPath);
+
+        } catch (Exception e) {
+            logger.error("Error in Processing CSV Report, Message: {}, Error: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to Process CSV Report", e);
+        } finally {
+            if (s3client != null) {
+                s3client.shutdown();
+            }
+        }
+    }
+
+    private static Font getHeaderFont(XSSFWorkbook workbook) {
+        Font headerFont = workbook.createFont();
+        headerFont.setBold(true);
+        headerFont.setColor(IndexedColors.WHITE.getIndex());
+        headerFont.setFontHeightInPoints((short) 11);
+
+        logger.info("Header Font Created Successfully!");
+        return headerFont;
+    }
+
+    private static CellStyle getHeaderStyle(XSSFWorkbook workbook, Font headerFont) {
+
+        CellStyle headerStyle = workbook.createCellStyle();
+        headerStyle.setFillForegroundColor(IndexedColors.ROYAL_BLUE.getIndex());
+        headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        headerStyle.setAlignment(HorizontalAlignment.CENTER);
+        headerStyle.setVerticalAlignment(VerticalAlignment.CENTER);
+        headerStyle.setBorderTop(BorderStyle.THIN);
+        headerStyle.setBorderBottom(BorderStyle.THIN);
+        headerStyle.setBorderLeft(BorderStyle.THIN);
+        headerStyle.setBorderRight(BorderStyle.THIN);
+        headerStyle.setTopBorderColor(IndexedColors.WHITE.getIndex());
+        headerStyle.setBottomBorderColor(IndexedColors.WHITE.getIndex());
+        headerStyle.setLeftBorderColor(IndexedColors.WHITE.getIndex());
+        headerStyle.setRightBorderColor(IndexedColors.WHITE.getIndex());
+        headerStyle.setFont(headerFont);
+
+        logger.info("Header Style Created Successfully!");
+        return headerStyle;
+    }
+
+    private static CellStyle getDataStyle(XSSFWorkbook workbook) {
+        CellStyle dataStyle = workbook.createCellStyle();
+        dataStyle.setAlignment(HorizontalAlignment.CENTER);
+        dataStyle.setVerticalAlignment(VerticalAlignment.CENTER);
+        dataStyle.setBorderTop(BorderStyle.THIN);
+        dataStyle.setBorderBottom(BorderStyle.THIN);
+        dataStyle.setBorderLeft(BorderStyle.THIN);
+        dataStyle.setBorderRight(BorderStyle.THIN);
+        dataStyle.setTopBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        dataStyle.setBottomBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        dataStyle.setLeftBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        dataStyle.setRightBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
+
+        logger.info("Data Style Created Successfully!");
+        return dataStyle;
+    }
+
+    private static CellStyle getGroupedHeaderStyle(XSSFWorkbook workbook) {
+        CellStyle groupedHeaderStyle = workbook.createCellStyle();
+        groupedHeaderStyle.setFillForegroundColor(IndexedColors.GREY_50_PERCENT.getIndex());
+        groupedHeaderStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+        groupedHeaderStyle.setAlignment(HorizontalAlignment.CENTER);
+        groupedHeaderStyle.setVerticalAlignment(VerticalAlignment.CENTER);
+        groupedHeaderStyle.setBorderTop(BorderStyle.THIN);
+        groupedHeaderStyle.setBorderBottom(BorderStyle.THIN);
+        groupedHeaderStyle.setBorderLeft(BorderStyle.THIN);
+        groupedHeaderStyle.setBorderRight(BorderStyle.THIN);
+        groupedHeaderStyle.setTopBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        groupedHeaderStyle.setBottomBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        groupedHeaderStyle.setLeftBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        groupedHeaderStyle.setRightBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
+
+        logger.info("Grouped Header Style Created Successfully!");
+        return groupedHeaderStyle;
+    }
+
+    private static Font getGroupHeaderFont(XSSFWorkbook workbook) {
+        Font groupHeaderFont = workbook.createFont();
+        groupHeaderFont.setBold(true);
+        groupHeaderFont.setColor(IndexedColors.WHITE.getIndex());
+        groupHeaderFont.setFontHeightInPoints((short) 11);
+
+        logger.info("Group Header Font Created Successfully!");
+        return groupHeaderFont;
+    }
+
+    private static CellStyle getEmptyGroupHeaderStyle(XSSFWorkbook workbook) {
+        CellStyle emptyGroupHeaderStyle = workbook.createCellStyle();
+        emptyGroupHeaderStyle.setAlignment(HorizontalAlignment.CENTER);
+        emptyGroupHeaderStyle.setVerticalAlignment(VerticalAlignment.CENTER);
+        emptyGroupHeaderStyle.setBorderTop(BorderStyle.THIN);
+        emptyGroupHeaderStyle.setBorderBottom(BorderStyle.THIN);
+        emptyGroupHeaderStyle.setBorderLeft(BorderStyle.THIN);
+        emptyGroupHeaderStyle.setBorderRight(BorderStyle.THIN);
+        emptyGroupHeaderStyle.setTopBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        emptyGroupHeaderStyle.setBottomBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        emptyGroupHeaderStyle.setLeftBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
+        emptyGroupHeaderStyle.setRightBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
+
+        logger.info("Empty Group Header Style Created Successfully!");
+        return emptyGroupHeaderStyle;
+    }
+
+    private static void processExcelReport(Dataset<Row> expectedDF, Map<String, String> extraParametersMap,
+            JobContext jobContext, String reportFileName, Map<String, Map<String, String>> ragConfigurationMap) {
+
+        if (extraParametersMap == null) {
+            throw new RuntimeException("Extra Parameters Map Cannot Be NULL");
+        }
+        if (jobContext == null) {
+            throw new RuntimeException("Job Context Cannot Be NULL");
+        }
+        if (reportFileName == null || reportFileName.trim().isEmpty()) {
+            throw new RuntimeException("Report File Name Cannot Be NULL/Empty");
+        }
+
+        // Added For KPI Group Headers
+        String kpiGroup = jobContext.getParameters().get("EXCEL_HEADER_GROUP");
+        Map<String, List<String>> kpiGroupMap = new HashMap<>();
+
+        if (kpiGroup != null && !kpiGroup.trim().isEmpty()) {
+            try {
+                kpiGroupMap = new ObjectMapper().readValue(kpiGroup,
+                        new TypeReference<Map<String, List<String>>>() {
+                        });
+                logger.info("OTFReportWriter KPI Group Map: {}", kpiGroupMap);
+            } catch (JsonMappingException e) {
+                logger.info("Failed to Parse KPI Group JSON (JsonMappingException): {}", e.getMessage());
+                kpiGroupMap = new HashMap<>();
+            } catch (JsonProcessingException e) {
+                logger.info("Failed to Parse KPI Group JSON (JsonProcessingException): {}", e.getMessage());
+                kpiGroupMap = new HashMap<>();
+            } catch (Exception e) {
+                logger.info("Unexpected Error Parsing KPI Group JSON: {}", e.getMessage());
+                kpiGroupMap = new HashMap<>();
+            }
+        } else {
+            logger.info("No KPI Group Configuration Provided or Empty");
+        }
+
+        String bucketName = SPARK_MINIO_BUCKET_NAME_PM;
+        String minioEndpointUrl = SPARK_MINIO_ENDPOINT_URL;
+        String minioAccessKey = SPARK_MINIO_ACCESS_KEY;
+        String minioSecretKey = SPARK_MINIO_SECRET_KEY;
+        String minioRegion = "us-east-1";
+
+        if (bucketName == null || bucketName.trim().isEmpty()) {
+            throw new RuntimeException("MinIO Bucket Name Cannot Be NULL/Empty");
+        }
+        if (minioEndpointUrl == null || minioEndpointUrl.trim().isEmpty()) {
+            throw new RuntimeException("MinIO Endpoint URL Cannot Be NULL/Empty");
+        }
+        if (minioAccessKey == null || minioAccessKey.trim().isEmpty()) {
+            throw new RuntimeException("MinIO Access Key Cannot Be NULL/Empty");
+        }
+        if (minioSecretKey == null || minioSecretKey.trim().isEmpty()) {
+            throw new RuntimeException("MinIO Secret Key Cannot Be NULL/Empty");
+        }
+
+        String pushedDate = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String tmpDirPath = "protected/PM/FlowReport/tmp/FlowReport_" + UUID.randomUUID();
+        String tmpMinioPath = "protected/PM/FlowReport/tmp/" + reportFileName;
+        String finalMinioPath = "protected/PM/FlowReport/" + pushedDate + "/" + reportFileName;
+
+        String reportWidgetFilePath = reportFileName;
+        jobContext.setParameters("REPORT_WIDGET_FILE_PATH", reportWidgetFilePath);
+        logger.info("REPORT_WIDGET_FILE_PATH '{}' Set to Job Context Successfully!", reportWidgetFilePath);
+
+        String generatedReportFilePath = "/" + finalMinioPath;
+        jobContext.setParameters("GENERATED_REPORT_FILE_PATH", generatedReportFilePath);
+        logger.info("GENERATED_REPORT_FILE_PATH '{}' Set to Job Context Successfully!", generatedReportFilePath);
+
+        InputStream inputStream = null;
+        AmazonS3 s3client = null;
+
+        try {
+            logger.info("Step 1: Creating Temporary Directory: {}", tmpDirPath);
+            File tmpDir = new File(tmpDirPath);
+            if (!tmpDir.exists()) {
+                if (!tmpDir.mkdirs()) {
+                    throw new RuntimeException("Failed to create temporary directory: " + tmpDirPath);
+                }
+                logger.info("Temporary Directory Created Successfully");
+            }
+
+            logger.info("Step 2: Converting DataFrame to Excel");
+            String excelFilePath = tmpDirPath + "/" + reportFileName;
+            File excelFile = new File(excelFilePath);
+
+            String frequency = jobContext.getParameters().get("FREQUENCY");
+            if (frequency == null || frequency.trim().isEmpty()) {
+                frequency = "DEFAULT";
+                logger.info("FREQUENCY parameter is null or empty, using default value: {}", frequency);
+            } else {
+                frequency = frequency.toUpperCase();
+            }
+
+            try (XSSFWorkbook workbook = new XSSFWorkbook()) {
+                XSSFSheet sheet = workbook.createSheet(frequency);
+
+                // Create Consistent Font For Both Header Types
+                // (Group Headers & Regular Headers)
+
+                Font headerFont = getHeaderFont(workbook);
+                CellStyle headerStyle = getHeaderStyle(workbook, headerFont);
+                CellStyle dataStyle = getDataStyle(workbook);
+
+                // Create Style Cache for RAG Colors
+                Map<String, CellStyle> ragStyleCache = new HashMap<>();
+                Font whiteFont = workbook.createFont();
+                whiteFont.setColor(IndexedColors.WHITE.getIndex());
+
+                String[] columns = expectedDF.columns();
+                if (columns == null || columns.length == 0) {
+                    throw new RuntimeException("DataFrame Has No Columns");
+                }
+
+                logger.info("Processing DataFrame With {} Columns", columns.length);
+
+                // Map KPI Code to Column Index
+                Map<String, Integer> kpiCodeToIndexMap = new HashMap<>();
+                for (int i = 0; i < columns.length; i++) {
+                    String colName = columns[i];
+                    if (colName != null && colName.contains("-")) {
+                        try {
+                            String kpiCode = colName.split("-")[0];
+                            if (kpiCode != null && !kpiCode.trim().isEmpty()) {
+                                kpiCodeToIndexMap.put(kpiCode, i);
+                                logger.info("Mapped KPI Code {} to Column Index {}", kpiCode, i);
+                            }
+                        } catch (Exception e) {
+                            logger.info("Failed to Parse KPI Code From Column {}: {}", colName, e.getMessage());
+                        }
+                    }
+                }
+
+                // Create Grouped Header Style With Grey Background and White Text
+                // (For Cells With Values)
+                CellStyle groupedHeaderStyle = getGroupedHeaderStyle(workbook);
+
+                // Create white font for group headers
+                Font groupHeaderFont = getGroupHeaderFont(workbook);
+                groupedHeaderStyle.setFont(groupHeaderFont);
+
+                // Create Empty Group Header Style With White Background
+                // (For Cells Without Values)
+                CellStyle emptyGroupHeaderStyle = getEmptyGroupHeaderStyle(workbook);
+
+                // Create KPI Group Header Row (Row 0) and Regular Header Row (Row 1)
+                // Only If Group Map Is Present And Not Empty
+                XSSFRow groupHeaderRow = null;
+                XSSFRow headerRow;
+                int dataStartRowIdx;
+                if (kpiGroupMap != null && !kpiGroupMap.isEmpty()) {
+                    logger.info("KPI Group Map Is Present And Not Empty, Creating Grouped Headers!");
+                    groupHeaderRow = sheet.createRow(0);
+                    headerRow = sheet.createRow(1);
+                    dataStartRowIdx = 2;
+                } else {
+                    logger.info("No KPI Group Map Provided, Skipping Grouped Headers!");
+                    // Only Create Regular Header At Row 0
+                    headerRow = sheet.createRow(0);
+                    dataStartRowIdx = 1;
+                }
+
+                // Create Grouped headers - Each Column Gets Its Own Cell Initially
+                if (groupHeaderRow != null) {
+                    logger.info("Processing KPI Group Headers: {}", kpiGroupMap);
+                    // Create a Map To Track Which Columns Belong To Which Group
+                    Map<Integer, String> columnToGroupMap = new HashMap<>();
+                    logger.info("Available Columns In DataFrame: {}", Arrays.toString(columns));
+                    for (Map.Entry<String, List<String>> groupEntry : kpiGroupMap.entrySet()) {
+                        String groupName = groupEntry.getKey();
+                        List<String> groupColumns = groupEntry.getValue();
+                        logger.info("Processing Group: {} With Columns: {}", groupName, groupColumns);
+                        for (String groupColumn : groupColumns) {
+                            boolean found = false;
+                            for (int i = 0; i < columns.length; i++) {
+                                if (columns[i].equals(groupColumn)) {
+                                    columnToGroupMap.put(i, groupName);
+                                    logger.info("Mapped Column {} (Index {}) To Group {}", groupColumn, i, groupName);
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) {
+                                logger.info("Column {} From Group {} Not Found In DataFrame Columns", groupColumn,
+                                        groupName);
+                            }
+                        }
+                    }
+                    logger.info("Final Column To Group Mapping: {}", columnToGroupMap);
+                    logger.info("Creating Group Headers For {} Columns", columns.length);
+                    for (int i = 0; i < columns.length; i++) {
+                        XSSFCell groupCell = groupHeaderRow.createCell(i);
+                        String groupName = columnToGroupMap.get(i);
+                        if (groupName != null) {
+                            groupCell.setCellValue(groupName);
+                            groupCell.setCellStyle(groupedHeaderStyle); // Grey Background With White Text
+                            logger.info("Set Group Header For Column {} (Index {}): {} With Grey Background",
+                                    columns[i], i, groupName);
+                        } else {
+                            // If No Group Found, Set Empty Group Header With White Background
+                            groupCell.setCellValue("");
+                            groupCell.setCellStyle(emptyGroupHeaderStyle); // White Background
+                            logger.info(
+                                    "No Group Found For Column {} (Index {}), Setting Empty Group Header With White Background",
+                                    columns[i], i);
+                        }
+                    }
+
+                    // Merge Columns By Their Groups
+                    logger.info("Merging Columns By Their Groups...");
+                    Map<String, List<Integer>> groupToColumnsMap = new HashMap<>();
+                    for (Map.Entry<Integer, String> entry : columnToGroupMap.entrySet()) {
+                        String groupName = entry.getValue();
+                        Integer columnIndex = entry.getKey();
+                        groupToColumnsMap.computeIfAbsent(groupName, k -> new ArrayList<>()).add(columnIndex);
+                    }
+
+                    // Group To Columns Mapping (For Merging Group Headers)
+                    logger.info("Group To Columns Mapping: {}", groupToColumnsMap);
+                    for (Map.Entry<String, List<Integer>> groupEntry : groupToColumnsMap.entrySet()) {
+                        String groupName = groupEntry.getKey();
+                        List<Integer> columnIndices = groupEntry.getValue();
+                        if (columnIndices.size() > 1) {
+                            // Sort Column Indices
+                            logger.info("Sorting Column Indices For Group: {}", groupName);
+                            Collections.sort(columnIndices);
+                            int startIndex = columnIndices.get(0);
+                            int endIndex = columnIndices.get(columnIndices.size() - 1);
+                            sheet.addMergedRegion(new CellRangeAddress(0, 0, startIndex, endIndex));
+                            logger.info("Merged Group '{}' Header Cells From Column {} To {}", groupName, startIndex,
+                                    endIndex);
+                        } else {
+                            logger.info("Group '{}' Has Single Column At Index {}, No Merging Needed", groupName,
+                                    columnIndices.get(0));
+                        }
+                    }
+                    // Log Final Structure Summary
+                    logger.info("=== FINAL GROUP HEADER STRUCTURE ===");
+                    logger.info("Total Columns: {}", columns.length);
+                    logger.info("Grouped Columns: {} (Total Groups: {})", columnToGroupMap.size(),
+                            groupToColumnsMap.size());
+                    logger.info("Non-Grouped Columns: {}", columns.length - columnToGroupMap.size());
+                    logger.info("Groups: {}", groupToColumnsMap.keySet());
+                    logger.info("=====================================");
+                }
+
+                // Create regular headers
+                for (int i = 0; i < columns.length; i++) {
+                    XSSFCell cell = headerRow.createCell(i);
+                    cell.setCellValue(columns[i]);
+                    cell.setCellStyle(headerStyle);
+                }
+                logger.info("Dataframe Count: {}", expectedDF.count());
+                List<org.apache.spark.sql.Row> rows = expectedDF.collectAsList();
+                logger.info("Dataframe List Size: {}", rows.size());
+                for (int i = 0; i < rows.size(); i++) {
+                    XSSFRow dataRow = sheet.createRow(i + dataStartRowIdx);
+                    // dataStartRowIdx is 2 If Group Header Present, 1 If Not
+                    org.apache.spark.sql.Row sparkRow = rows.get(i);
+                    // logger.info("Processing Row {} Of {}", i + 1, rows.size());
+
+                    for (int j = 0; j < columns.length; j++) {
+                        XSSFCell cell = dataRow.createCell(j);
+                        Object value = sparkRow.get(j);
+                        String cellStr = (value != null) ? value.toString() : "";
+                        // logger.info("Cell[{},{}] - Column: {}, Value: {}", i + 1, j, columns[j], cellStr);
+
+                        if (value == null) {
+                            cell.setCellValue("");
+                        } else if (value instanceof Number) {
+                            cell.setCellValue(((Number) value).doubleValue());
+                        } else if (value instanceof Boolean) {
+                            cell.setCellValue((Boolean) value);
+                        } else {
+                            cell.setCellValue(cellStr);
+                        }
+
+                        // Start With Base Data Style
+                        CellStyle cellStyle = dataStyle;
+
+                        // RAG Logic - Only Apply To Columns That Match KPI Codes
+                        String colName = columns[j];
+                        if (colName != null && colName.contains("-") && ragConfigurationMap != null) {
+                            try {
+                                String kpiCode = colName.split("-")[0];
+                                if (kpiCode != null && !kpiCode.trim().isEmpty()) {
+                                    Map<String, String> kpiRagConfig = ragConfigurationMap.get(kpiCode);
+                                    if (kpiRagConfig != null && !kpiRagConfig.isEmpty()) {
+                                        // logger.info("Found RAG Configuration For KPI {} At Column {}", kpiCode, j);
+                                        for (Map.Entry<String, String> condition : kpiRagConfig.entrySet()) {
+                                            String expression = condition.getKey();
+                                            String hexColor = condition.getValue();
+                                            // logger.info("Evaluating RAG Condition: {} With Color {}", expression,
+                                            //         hexColor);
+                                            try {
+                                                if (!cellStr.isEmpty() && !cellStr.equals("-")) {
+                                                    double val = Double.parseDouble(cellStr);
+
+                                                    // Parse and evaluate the condition
+                                                    boolean conditionMet = evaluateCondition(expression, val, kpiCode);
+                                                    // logger.info("RAG Evaluation Result: {}", conditionMet);
+
+                                                    if (conditionMet) {
+                                                        // Use Cached Style Or Create New One
+                                                        CellStyle ragStyle = ragStyleCache.get(hexColor);
+                                                        if (ragStyle == null) {
+                                                            ragStyle = workbook.createCellStyle();
+                                                            ragStyle.cloneStyleFrom(dataStyle);
+                                                            XSSFColor fillColor = new XSSFColor(
+                                                                    java.awt.Color.decode(hexColor),
+                                                                    null);
+                                                            ((XSSFCellStyle) ragStyle)
+                                                                    .setFillForegroundColor(fillColor);
+                                                            ragStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
+                                                            ragStyle.setIndention((short) 2);
+                                                            ragStyle.setFont(whiteFont);
+                                                            ragStyleCache.put(hexColor, ragStyle);
+                                                            // logger.info("Created New RAG Style For Color: {}",
+                                                            //         hexColor);
+                                                        }
+                                                        cellStyle = ragStyle;
+                                                        // logger.info("Applied RAG Color {} As Background To Cell[{},{}]",
+                                                        //         hexColor, i + 1, j);
+                                                    }
+                                                } else {
+                                                    // logger.info("Skipping RAG Evaluation For Empty Cell Or Dash Value");
+                                                }
+                                            } catch (Exception ex) {
+                                                logger.info("RAG Evaluation Failed For KPI {}: {}", kpiCode,
+                                                        ex.getMessage());
+                                                logger.info(
+                                                        "Failed RAG Evaluation Details - Cell[{},{}], Value: {}, Expression: {}",
+                                                        i + 1, j, cellStr, expression, ex);
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (Exception e) {
+                                logger.info("Error Processing RAG For Column {}: {}", colName, e.getMessage());
+                            }
+                        }
+
+                        cell.setCellStyle(cellStyle);
+                        // logger.info("Final Cell Style Applied To Cell[{},{}]", i + 1, j);
+                    }
+                }
+
+                for (int i = 0; i < columns.length; i++) {
+                    sheet.autoSizeColumn(i);
+                    int currentWidth = sheet.getColumnWidth(i);
+                    sheet.setColumnWidth(i, currentWidth + 1000);
+                }
+
+                if (groupHeaderRow != null) {
+                    sheet.createFreezePane(0, 2);
+                    // Freeze First 2 Rows (Group Header And Regular Header)
+                    sheet.setAutoFilter(new CellRangeAddress(0, rows.size() + 1, 0, columns.length - 1));
+                    // +1 For The Additional Header Row
+                } else {
+                    sheet.createFreezePane(0, 1); // Freeze only the regular header
+                    sheet.setAutoFilter(new CellRangeAddress(0, rows.size(), 0, columns.length - 1));
+                }
+
+                try (FileOutputStream fileOut = new FileOutputStream(excelFile)) {
+                    workbook.write(fileOut);
+                }
+            }
+
+            logger.info("📊 Excel File Created Successfully At: {}", excelFilePath);
+
+            logger.info("Step 3: Creating MinIO S3 Client");
+            AWSCredentials credentials = new BasicAWSCredentials(minioAccessKey, minioSecretKey);
+            ClientConfiguration clientConfiguration = new ClientConfiguration();
+            clientConfiguration.setSignerOverride("AWSS3V4SignerType");
+            clientConfiguration.setConnectionTimeout(30000);
+            clientConfiguration.setSocketTimeout(30000);
+
+            s3client = AmazonS3ClientBuilder.standard()
+                    .withEndpointConfiguration(new EndpointConfiguration(minioEndpointUrl, minioRegion))
+                    .withPathStyleAccessEnabled(true)
+                    .withClientConfiguration(clientConfiguration)
+                    .withCredentials(new AWSStaticCredentialsProvider(credentials))
+                    .build();
+
+            logger.info("MinIO S3 Client Created Successfully");
+
+            logger.info("Step 4: Uploading to Temporary MinIO Path: {}", tmpMinioPath);
+            inputStream = new FileInputStream(excelFile);
+            ObjectMetadata metadata = new ObjectMetadata();
+            long excelFileSize = excelFile.length();
+            metadata.setContentLength(excelFileSize);
+            s3client.putObject(bucketName, tmpMinioPath, inputStream, metadata);
+            logger.info("Excel File Uploaded Successfully to Temporary MinIO Path");
+
+            String fileSize = String.valueOf(excelFileSize);
+            jobContext.setParameters("FILE_SIZE", fileSize);
+            logger.info("FILE_SIZE '{}' Set to Job Context Successfully!", fileSize);
+
+            logger.info("Step 5: Copying to Final MinIO Path: {}", finalMinioPath);
+            s3client.copyObject(bucketName, tmpMinioPath, bucketName, finalMinioPath);
+            logger.info("Excel File Copied Successfully to Final Path");
+
+            if (!s3client.doesObjectExist(bucketName, finalMinioPath)) {
+                throw new RuntimeException("Failed to Verify Final File Exists: " + finalMinioPath);
+            }
+
+            logger.info("Step 6: Deleting Temporary Files from MinIO");
+            s3client.deleteObject(bucketName, tmpMinioPath);
+            logger.info("Temporary MinIO Objects Deleted Successfully");
+
+            logger.info("Step 7: Cleaning Up Local Temporary Files");
+            FileUtils.deleteDirectory(new File(tmpDirPath));
+            logger.info("Local Temporary Files Deleted Successfully");
+
+            logger.info("Excel Report Uploaded Successfully!");
+            logger.info("Final file location: {}/{}", bucketName, finalMinioPath);
+
+        } catch (Exception e) {
+            logger.error("Error in Processing Excel Report, Message: {}, Error: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to Process Excel Report", e);
+        } finally {
+            if (inputStream != null) {
+                try {
+                    inputStream.close();
+                } catch (IOException e) {
+                    logger.error("Error in Closing Input Stream, Message: {}, Error: {}", e.getMessage(), e);
+                }
+            }
+            if (s3client != null) {
+                s3client.shutdown();
+            }
+        }
+    }
+
+    private static String getReportFileName(Map<String, String> jobContextMap, Map<String, String> extraParametersMap,
+            Map<String, String> reportWidgetDetailsMap) {
+
+        String reportName = reportWidgetDetailsMap.get("REPORT_NAME");
+        String level = jobContextMap.get("AGGREGATION_LEVEL");
+        String domain = jobContextMap.get("DOMAIN");
+        String vendor = jobContextMap.get("VENDOR");
+        String frequency = jobContextMap.get("FREQUENCY");
+        String reportType = "OTF";
+        String reportFormat = extraParametersMap.get("REPORT_FORMAT_TYPE");
+        String epochTime = String.valueOf(System.currentTimeMillis());
+
+        String reportFileName = reportName + "_" + domain + "_" + vendor + "_" + frequency
+                + "_" + level + "_" + reportType + "_" + reportFormat + "_" + epochTime;
+
+        String[] reportFileNameArray = reportFileName.split(" ");
+        reportFileName = String.join("_", reportFileNameArray);
+
+        reportFileName = reportFileName.toUpperCase();
+
+        if (reportFormat.equals("excel")) {
+            reportFileName += ".xlsx";
+        } else if (reportFormat.equals("csv")) {
+            reportFileName += ".csv";
+        }
+        return reportFileName;
+    }
+
+    private static boolean evaluateCondition(String expression, double value, String kpiCode) {
+        String cleanExpr = expression.replace(" ", "").replace("KPI#" + kpiCode, String.valueOf(value));
+        if (cleanExpr.startsWith("(") && cleanExpr.endsWith(")")) {
+            cleanExpr = cleanExpr.substring(1, cleanExpr.length() - 1);
+        }
+        if (cleanExpr.contains("&&")) {
+            String[] parts = cleanExpr.split("&&");
+            boolean leftResult = evaluateSimpleCondition(parts[0]);
+            boolean rightResult = evaluateSimpleCondition(parts[1]);
+            return leftResult && rightResult;
+        }
+        if (cleanExpr.contains("||")) {
+            String[] parts = cleanExpr.split("\\|\\|");
+            boolean leftResult = evaluateSimpleCondition(parts[0]);
+            boolean rightResult = evaluateSimpleCondition(parts[1]);
+            return leftResult || rightResult;
+        }
+        return evaluateSimpleCondition(cleanExpr);
+    }
+
+    private static boolean evaluateSimpleCondition(String condition) {
+        try {
+            if (condition.contains(">=")) {
+                String[] parts = condition.split(">=");
+                double val = Double.parseDouble(parts[0]);
+                double threshold = Double.parseDouble(parts[1]);
+                return val >= threshold;
+            } else if (condition.contains("<=")) {
+                String[] parts = condition.split("<=");
+                double val = Double.parseDouble(parts[0]);
+                double threshold = Double.parseDouble(parts[1]);
+                return val <= threshold;
+            } else if (condition.contains(">")) {
+                String[] parts = condition.split(">");
+                double val = Double.parseDouble(parts[0]);
+                double threshold = Double.parseDouble(parts[1]);
+                return val > threshold;
+            } else if (condition.contains("<")) {
+                String[] parts = condition.split("<");
+                double val = Double.parseDouble(parts[0]);
+                double threshold = Double.parseDouble(parts[1]);
+                return val < threshold;
+            } else if (condition.contains("==")) {
+                String[] parts = condition.split("==");
+                double val = Double.parseDouble(parts[0]);
+                double threshold = Double.parseDouble(parts[1]);
+                return val == threshold;
+            } else if (condition.contains("=")) {
+                String[] parts = condition.split("=");
+                double val = Double.parseDouble(parts[0]);
+                double threshold = Double.parseDouble(parts[1]);
+                return val == threshold;
+            }
+        } catch (Exception e) {
+            logger.error("Error evaluating condition: {} - {}", condition, e.getMessage());
+        }
+        return false;
+    }
+
+}
