@@ -32,7 +32,7 @@ public class OpenAlertCQLRead extends Processor {
     private static final String SPARK_PM_JDBC_URL = "SPARK_PM_JDBC_URL";
     private static final String SPARK_PM_JDBC_USERNAME = "SPARK_PM_JDBC_USERNAME";
     private static final String SPARK_PM_JDBC_PASSWORD = "SPARK_PM_JDBC_PASSWORD";
-    private static final String SPARK_CASSANDRA_KEYSPACE_PM = "SPARK_CASSANDRA_KEYSPACE_PM"; //
+    private static final String SPARK_CASSANDRA_KEYSPACE_PM = "SPARK_CASSANDRA_KEYSPACE_PM";
     private static final String SPARK_CASSANDRA_HOST = "SPARK_CASSANDRA_HOST";
     private static final String SPARK_CASSANDRA_PORT = "SPARK_CASSANDRA_PORT";
     private static final String SPARK_CASSANDRA_DATACENTER = "SPARK_CASSANDRA_DATACENTER";
@@ -52,23 +52,22 @@ public class OpenAlertCQLRead extends Processor {
 
     public OpenAlertCQLRead() {
         super();
-        logger.info("OpenAlertCQLRead No Argument Constructor Called!");
     }
 
     public OpenAlertCQLRead(Dataset<Row> dataframe, Integer id, String processorName) {
         super(id, processorName);
         this.dataFrame = dataframe;
-        logger.info("OpenAlertCQLRead Constructor Called with Input DataFrame With ID: {} and Processor Name: {}", id,
-                processorName);
     }
 
     public OpenAlertCQLRead(Integer id, String processorName) {
         super(id, processorName);
-        logger.info("OpenAlertCQLRead Constructor Called with ID: {} and Processor Name: {}", id, processorName);
     }
 
     @Override
     public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) throws Exception {
+
+        String CURRENT_COUNT = jobContext.getParameter("CURRENT_COUNT");
+        logger.info("[OpenAlertCQLRead={}] Execution Started!", CURRENT_COUNT);
 
         if (this.dataFrame == null || this.dataFrame.isEmpty()) {
             return this.dataFrame;
@@ -76,55 +75,19 @@ public class OpenAlertCQLRead extends Processor {
 
         long startTime = System.currentTimeMillis();
 
-        logger.info("[OpenAlertCQLRead] Execution Started!");
-
-        // jobContextMap = jobContext.getParameters();
         if (jobContext != null && jobContext.getParameters() != null) {
             for (Map.Entry<String, String> entry : jobContext.getParameters().entrySet()) {
                 jobContextMap.put(entry.getKey(), entry.getValue());
             }
         }
 
-        logger.info("Job Context Map={}", jobContextMap);
-        sparkPMJdbcDriver = jobContextMap.get(SPARK_PM_JDBC_DRIVER);
-        sparkPMJdbcUrl = jobContextMap.get(SPARK_PM_JDBC_URL);
-        sparkPMJdbcUsername = jobContextMap.get(SPARK_PM_JDBC_USERNAME);
-        sparkPMJdbcPassword = jobContextMap.get(SPARK_PM_JDBC_PASSWORD);
-        sparkCassandraKeyspacePM = jobContextMap.get(SPARK_CASSANDRA_KEYSPACE_PM);
-        sparkCassandraHost = jobContextMap.get(SPARK_CASSANDRA_HOST);
-        sparkCassandraPort = jobContextMap.get(SPARK_CASSANDRA_PORT);
-        sparkCassandraDatacenter = jobContextMap.get(SPARK_CASSANDRA_DATACENTER);
-        sparkCassandraUsername = jobContextMap.get(SPARK_CASSANDRA_USERNAME);
-        sparkCassandraPassword = jobContextMap.get(SPARK_CASSANDRA_PASSWORD);
-
-        logger.info("JDBC Credentials: Driver={}, URL={}, User={}, Password={}",
-                sparkPMJdbcDriver,
-                sparkPMJdbcUrl,
-                sparkPMJdbcUsername,
-                sparkPMJdbcPassword);
-
-        logger.info("Cassandra Credentials: Keyspace={}, Host={}, Port={}, Datacenter={}, Username={}, Password={}",
-                sparkCassandraKeyspacePM,
-                sparkCassandraHost,
-                sparkCassandraPort,
-                sparkCassandraDatacenter,
-                sparkCassandraUsername,
-                sparkCassandraPassword);
-
+        initializeGlobalVariables(jobContextMap, CURRENT_COUNT);
         jobContext = setSparkConf(jobContext);
 
-        String inputConfig = null;
-        String extractedParameters = null;
-        String nodeAndAggregationDetails = null;
-        String kpiCodeNameMapJson = null;
-
-        String CURRENT_COUNT = jobContext.getParameter("CURRENT_COUNT");
-        logger.info("[OpenAlertCQLRead] CURRENT_COUNT={}", CURRENT_COUNT);
-
-        inputConfig = jobContext.getParameter("INPUT_CONFIGURATIONS" + CURRENT_COUNT);
-        nodeAndAggregationDetails = jobContext.getParameter("NODE_AND_AGGREGATION_DETAILS" + CURRENT_COUNT);
-        extractedParameters = jobContext.getParameter("EXTRACTED_PARAMETERS" + CURRENT_COUNT);
-        kpiCodeNameMapJson = jobContext.getParameter("KPI_CODE_NAME_MAP" + CURRENT_COUNT);
+        String inputConfig = jobContext.getParameter("INPUT_CONFIGURATIONS" + CURRENT_COUNT);
+        String nodeAndAggregationDetails = jobContext.getParameter("NODE_AND_AGGREGATION_DETAILS" + CURRENT_COUNT);
+        String extractedParameters = jobContext.getParameter("EXTRACTED_PARAMETERS" + CURRENT_COUNT);
+        String kpiCodeNameMapJson = jobContext.getParameter("KPI_CODE_NAME_MAP" + CURRENT_COUNT);
 
         Map<String, String> inputConfigMap = new ObjectMapper().readValue(inputConfig,
                 new TypeReference<Map<String, String>>() {
@@ -139,13 +102,14 @@ public class OpenAlertCQLRead extends Processor {
                 new TypeReference<Map<String, String>>() {
                 });
 
-        logger.info("[OpenAlertCQLRead] Input Config Map: {}", inputConfigMap);
-        logger.info("[OpenAlertCQLRead] Node And Aggregation Details Map: {}", nodeAndAggregationDetailsMap);
-        logger.info("[OpenAlertCQLRead] Extra Parameters Map: {}", extraParametersMap);
-        logger.info("[OpenAlertCQLRead] KPI Code Name Map: {}", kpiCodeNameMap);
+        logger.info("[OpenAlertCQLRead={}] Input Config Map: {}", CURRENT_COUNT, inputConfigMap);
+        logger.info("[OpenAlertCQLRead={}] Node And Aggregation Details Map: {}", CURRENT_COUNT,
+                nodeAndAggregationDetailsMap);
+        logger.info("[OpenAlertCQLRead={}] Extra Parameters Map: {}", CURRENT_COUNT, extraParametersMap);
+        logger.info("[OpenAlertCQLRead={}] KPI Code Name Map: {}", CURRENT_COUNT, kpiCodeNameMap);
 
         Dataset<Row> cqlResultDataFrame = getResultOfNodeAndAggregationDetails(nodeAndAggregationDetailsMap,
-                inputConfigMap, extraParametersMap, jobContext);
+                inputConfigMap, extraParametersMap, jobContext, CURRENT_COUNT);
 
         long endTime = System.currentTimeMillis();
         long durationMillis = endTime - startTime;
@@ -153,15 +117,49 @@ public class OpenAlertCQLRead extends Processor {
         long seconds = (durationMillis % 60000) / 1000;
 
         cqlResultDataFrame.show();
-        logger.info("++++++[OpenAlertCQLRead] Execution Completed! Time Taken: {} Minutes | {} Seconds", minutes,
+        logger.info("++++++[OpenAlertCQLRead={}] Execution Completed! Time Taken: {} Minutes | {} Seconds",
+                CURRENT_COUNT, minutes,
                 seconds);
 
         return cqlResultDataFrame;
     }
 
+    private void initializeGlobalVariables(Map<String, String> jobContextMap, String currentCount) {
+
+        sparkPMJdbcDriver = jobContextMap.get(SPARK_PM_JDBC_DRIVER);
+        sparkPMJdbcUrl = jobContextMap.get(SPARK_PM_JDBC_URL);
+        sparkPMJdbcUsername = jobContextMap.get(SPARK_PM_JDBC_USERNAME);
+        sparkPMJdbcPassword = jobContextMap.get(SPARK_PM_JDBC_PASSWORD);
+
+        sparkCassandraKeyspacePM = jobContextMap.get(SPARK_CASSANDRA_KEYSPACE_PM);
+        sparkCassandraHost = jobContextMap.get(SPARK_CASSANDRA_HOST);
+        sparkCassandraPort = jobContextMap.get(SPARK_CASSANDRA_PORT);
+        sparkCassandraDatacenter = jobContextMap.get(SPARK_CASSANDRA_DATACENTER);
+        sparkCassandraUsername = jobContextMap.get(SPARK_CASSANDRA_USERNAME);
+        sparkCassandraPassword = jobContextMap.get(SPARK_CASSANDRA_PASSWORD);
+
+        logger.info(
+                "[OpenAlertCQLRead={}] JDBC Credentials: Driver={}, URL={}, User={}, Password={}",
+                currentCount,
+                sparkPMJdbcDriver,
+                sparkPMJdbcUrl,
+                sparkPMJdbcUsername,
+                sparkPMJdbcPassword);
+
+        logger.info(
+                "[OpenAlertCQLRead={}] Cassandra Credentials: Keyspace={}, Host={}, Port={}, Datacenter={}, Username={}, Password={}",
+                currentCount,
+                sparkCassandraKeyspacePM,
+                sparkCassandraHost,
+                sparkCassandraPort,
+                sparkCassandraDatacenter,
+                sparkCassandraUsername,
+                sparkCassandraPassword);
+    }
+
     private static Dataset<Row> getResultOfNodeAndAggregationDetails(
             Map<String, String> nodeAndAggregationDetails, Map<String, String> reportWidgetDetails,
-            Map<String, String> extraParameters, JobContext jobContext) {
+            Map<String, String> extraParameters, JobContext jobContext, String currentCount) {
 
         Dataset<Row> cqlResultDataFrame = null;
 
@@ -218,8 +216,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 1: CLUBBED, CLUBBED, CLUBBED, CLUBBED, CLUBBED");
 
-                // CASE 1: CLUBBED, CLUBBED, CLUBBED, CLUBBED, CLUBBED
-
                 aggregationLevel = "L0";
                 cqlResultDataFrame = getCQLDataForSelectedLevel(jobContext, aggregationLevel, reportWidgetDetails,
                         extraParameters, nodeAndAggregationDetails);
@@ -228,8 +224,6 @@ public class OpenAlertCQLRead extends Processor {
                     && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
                 logger.info("CASE 2: CLUBBED, CLUBBED, CLUBBED, CLUBBED, INDIVIDUAL");
-
-                // CASE 2: CLUBBED, CLUBBED, CLUBBED, CLUBBED, INDIVIDUAL
 
                 aggregationLevel = netype;
                 cqlResultDataFrame = getCQLDataForSelectedLevel(jobContext, aggregationLevel, reportWidgetDetails,
@@ -240,8 +234,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 3: INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED, CLUBBED");
 
-                // CASE 3: INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED, CLUBBED
-
                 aggregationLevel = "L1";
                 cqlResultDataFrame = getCQLDataForSelectedLevel(jobContext, aggregationLevel, reportWidgetDetails,
                         extraParameters, nodeAndAggregationDetails);
@@ -250,8 +242,6 @@ public class OpenAlertCQLRead extends Processor {
                     && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
                 logger.info("CASE 4: INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED, INDIVIDUAL");
-
-                // CASE 4: INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED, INDIVIDUAL
 
                 aggregationLevel = netype;
                 cqlResultDataFrame = getCQLDataForSelectedLevel(jobContext, aggregationLevel, reportWidgetDetails,
@@ -262,8 +252,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 5: INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED");
 
-                // CASE 5: INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED
-
                 aggregationLevel = "L2";
                 cqlResultDataFrame = getCQLDataForSelectedLevel(jobContext, aggregationLevel, reportWidgetDetails,
                         extraParameters, nodeAndAggregationDetails);
@@ -272,8 +260,6 @@ public class OpenAlertCQLRead extends Processor {
                     && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
                 logger.info("CASE 6: INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED, INDIVIDUAL");
-
-                // CASE 6: INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED, INDIVIDUAL
 
                 aggregationLevel = netype;
                 cqlResultDataFrame = getCQLDataForSelectedLevel(jobContext, aggregationLevel, reportWidgetDetails,
@@ -284,8 +270,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 7: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED");
 
-                // CASE 7: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED
-
                 aggregationLevel = "L3";
                 cqlResultDataFrame = getCQLDataForSelectedLevel(jobContext, aggregationLevel, reportWidgetDetails,
                         extraParameters, nodeAndAggregationDetails);
@@ -294,8 +278,6 @@ public class OpenAlertCQLRead extends Processor {
                     && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
                 logger.info("CASE 8: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED, INDIVIDUAL");
-
-                // CASE 8: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED, INDIVIDUAL
 
                 aggregationLevel = netype;
                 cqlResultDataFrame = getCQLDataForSelectedLevel(jobContext, aggregationLevel, reportWidgetDetails,
@@ -306,8 +288,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 9: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED");
 
-                // CASE 9: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED
-
                 aggregationLevel = "L4";
                 cqlResultDataFrame = getCQLDataForSelectedLevel(jobContext, aggregationLevel, reportWidgetDetails,
                         extraParameters, nodeAndAggregationDetails);
@@ -316,8 +296,6 @@ public class OpenAlertCQLRead extends Processor {
                     && geoL4.contains("INDIVIDUAL") && node.contains("INDIVIDUAL")) {
 
                 logger.info("CASE 10: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL");
-
-                // CASE 10: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL
 
                 aggregationLevel = netype;
                 cqlResultDataFrame = getCQLDataForSelectedLevel(jobContext, aggregationLevel, reportWidgetDetails,
@@ -328,8 +306,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 11: MULTI SELECT, CLUBBED, CLUBBED, CLUBBED, CLUBBED");
 
-                // CASE 11: MULTI SELECT, CLUBBED, CLUBBED, CLUBBED, CLUBBED
-
                 aggregationLevel = "L1";
                 cqlResultDataFrame = getCQLDataOfSelectedNodenames(geoL1ListArray, jobContext, aggregationLevel,
                         reportWidgetDetails, extraParameters, nodeAndAggregationDetails);
@@ -338,8 +314,6 @@ public class OpenAlertCQLRead extends Processor {
                     && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
                 logger.info("CASE 12: MULTI SELECT, CLUBBED, CLUBBED, CLUBBED, INDIVIDUAL");
-
-                // CASE 12: MULTI SELECT, CLUBBED, CLUBBED, CLUBBED, INDIVIDUAL
 
                 aggregationLevel = netype;
                 List<String> nodesList = getAllNodesForSelectedGeography(geoL1ListArray, jobContext, "L1",
@@ -363,7 +337,7 @@ public class OpenAlertCQLRead extends Processor {
                                 batches.size());
 
                         logger.info("\n{}", banner);
-                        logger.info("🔥🔥🔥 Processing {} - Nodes Array Size: {} 🔥🔥🔥", batchNumber,
+                        logger.info("Processing {} - Nodes Array Size: {}", batchNumber,
                                 nodesArray.length);
 
                         Dataset<Row> subDf = getCQLDataOfSelectedNodenames(nodesArray, jobContext, netype,
@@ -390,8 +364,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 13: MULTI SELECT, INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED");
 
-                // CASE 13: MULTI SELECT, INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED
-
                 aggregationLevel = "L2";
                 List<String> statesList = getAllStateOfSelectedRegions(geoL1ListArray, jobContext);
                 logger.info("States List Size: {}", statesList.size());
@@ -402,8 +374,6 @@ public class OpenAlertCQLRead extends Processor {
                     && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
                 logger.info("CASE 14: MULTI SELECT, INDIVIDUAL, CLUBBED, CLUBBED, INDIVIDUAL");
-
-                // CASE 14: MULTI SELECT, INDIVIDUAL, CLUBBED, CLUBBED, INDIVIDUAL
 
                 aggregationLevel = netype;
                 List<String> nodesList = getAllNodesForSelectedGeography(geoL1ListArray, jobContext, "L1",
@@ -417,8 +387,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 15: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED");
 
-                // CASE 15: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED
-
                 aggregationLevel = "L3";
                 List<String> citiesList = getAllCityOfSelectedRegions(geoL1ListArray, jobContext);
                 logger.info("Cities List Size: {}", citiesList.size());
@@ -429,8 +397,6 @@ public class OpenAlertCQLRead extends Processor {
                     && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
                 logger.info("CASE 16: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED, INDIVIDUAL");
-
-                // CASE 16: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED, INDIVIDUAL
 
                 aggregationLevel = netype;
                 List<String> nodesList = getAllNodesForSelectedGeography(geoL1ListArray, jobContext, "L1",
@@ -444,8 +410,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 17: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED");
 
-                // CASE 17: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED
-
                 aggregationLevel = "L4";
                 List<String> clustersList = getAllCusterOfSelectedRegions(geoL1ListArray, jobContext);
                 logger.info("Clusters List Size: {}", clustersList.size());
@@ -456,8 +420,6 @@ public class OpenAlertCQLRead extends Processor {
                     && geoL4.contains("INDIVIDUAL") && node.contains("INDIVIDUAL")) {
 
                 logger.info("CASE 18: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL");
-
-                // CASE 18: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL
 
                 aggregationLevel = netype;
                 List<String> nodesList = getAllNodesForSelectedGeography(geoL1ListArray, jobContext, "L1",
@@ -471,8 +433,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 19: MULTI SELECT, MULTI SELECT, CLUBBED, CLUBBED, CLUBBED");
 
-                // CASE 19: MULTI SELECT, MULTI SELECT, CLUBBED, CLUBBED, CLUBBED
-
                 aggregationLevel = "L2";
                 cqlResultDataFrame = getCQLDataOfSelectedNodenames(geoL2ListArray, jobContext, aggregationLevel,
                         reportWidgetDetails, extraParameters, nodeAndAggregationDetails);
@@ -481,8 +441,6 @@ public class OpenAlertCQLRead extends Processor {
                     && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
                 logger.info("CASE 20: MULTI SELECT, MULTI SELECT, CLUBBED, CLUBBED, INDIVIDUAL");
-
-                // CASE 20: MULTI SELECT, MULTI SELECT, CLUBBED, CLUBBED, INDIVIDUAL
 
                 aggregationLevel = netype;
                 List<String> nodesList = getAllNodesForSelectedGeography(geoL2ListArray, jobContext, "L2",
@@ -496,8 +454,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 21: MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED, CLUBBED");
 
-                // CASE 21: MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED, CLUBBED
-
                 aggregationLevel = "L3";
                 List<String> citiesList = getAllCityOfSelectedStates(geoL2ListArray, jobContext);
                 logger.info("Cities List Size: {}", citiesList.size());
@@ -508,8 +464,6 @@ public class OpenAlertCQLRead extends Processor {
                     && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
                 logger.info("CASE 22: MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED, INDIVIDUAL");
-
-                // CASE 22: MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED, INDIVIDUAL
 
                 aggregationLevel = netype;
                 List<String> nodesList = getAllNodesForSelectedGeography(geoL2ListArray, jobContext, "L2",
@@ -523,8 +477,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 23: MULTI SELECT, MULTI SELECT, MULTI SELECT, CLUBBED, CLUBBED");
 
-                // CASE 23: MULTI SELECT, MULTI SELECT, MULTI SELECT, CLUBBED, CLUBBED
-
                 aggregationLevel = "L3";
                 cqlResultDataFrame = getCQLDataOfSelectedNodenames(geoL3ListArray, jobContext, aggregationLevel,
                         reportWidgetDetails, extraParameters, nodeAndAggregationDetails);
@@ -533,8 +485,6 @@ public class OpenAlertCQLRead extends Processor {
                     && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
                 logger.info("CASE 24: MULTI SELECT, MULTI SELECT, MULTI SELECT, CLUBBED, INDIVIDUAL");
-
-                // CASE 24: MULTI SELECT, MULTI SELECT, MULTI SELECT, CLUBBED, INDIVIDUAL
 
                 aggregationLevel = netype;
                 List<String> nodesList = getAllNodesForSelectedGeography(geoL3ListArray, jobContext, "L3",
@@ -548,8 +498,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 25: MULTI SELECT, MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED");
 
-                // CASE 25: MULTI SELECT, MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED
-
                 aggregationLevel = "L4";
                 List<String> clustersList = getAllCusterOfSelectedCity(geoL3ListArray, jobContext);
                 logger.info("Clusters List Size: {}", clustersList.size());
@@ -560,8 +508,6 @@ public class OpenAlertCQLRead extends Processor {
                     && geoL4.contains("INDIVIDUAL") && node.contains("INDIVIDUAL")) {
 
                 logger.info("CASE 26: MULTI SELECT, MULTI SELECT, MULTI SELECT, INDIVIDUAL, INDIVIDUAL");
-
-                // CASE 26: MULTI SELECT, MULTI SELECT, MULTI SELECT, INDIVIDUAL, INDIVIDUAL
 
                 aggregationLevel = netype;
                 List<String> nodesList = getAllNodesForSelectedGeography(geoL3ListArray, jobContext, "L3",
@@ -575,8 +521,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 27: MULTI SELECT, MULTI SELECT, MULTI SELECT, MULTI SELECT, CLUBBED");
 
-                // CASE 27: MULTI SELECT, MULTI SELECT, MULTI SELECT, MULTI SELECT, CLUBBED
-
                 aggregationLevel = "L4";
                 cqlResultDataFrame = getCQLDataOfSelectedNodenames(geoL4ListArray, jobContext, aggregationLevel,
                         reportWidgetDetails, extraParameters, nodeAndAggregationDetails);
@@ -586,8 +530,6 @@ public class OpenAlertCQLRead extends Processor {
 
                 logger.info("CASE 28: MULTI SELECT, MULTI SELECT, MULTI SELECT, MULTI SELECT, INDIVIDUAL");
 
-                // CASE 28: MULTI SELECT, MULTI SELECT, MULTI SELECT, MULTI SELECT, INDIVIDUAL
-
                 aggregationLevel = netype;
 
                 List<String> nodesList = getAllNodesForSelectedGeography(geoL4ListArray, jobContext, "L4",
@@ -595,10 +537,9 @@ public class OpenAlertCQLRead extends Processor {
                 logger.info("Nodes List Size: {}", nodesList.size());
                 cqlResultDataFrame = getCQLDataOfSelectedNodenames(nodesList.toArray(new String[0]), jobContext, netype,
                         reportWidgetDetails, extraParameters, nodeAndAggregationDetails);
+
             } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && geoL3.contains("INDIVIDUAL")
                     && geoL4.contains("INDIVIDUAL") && node.contains("CLUBBED")) {
-
-                // CASE 29: MULTI SELECT, MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED
 
                 logger.info("CASE 29: MULTI SELECT, MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED");
 
@@ -610,8 +551,6 @@ public class OpenAlertCQLRead extends Processor {
 
             } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && geoL3.contains("INDIVIDUAL")
                     && geoL4.contains("INDIVIDUAL") && node.contains("INDIVIDUAL")) {
-
-                // CASE 30: MULTI SELECT, MULTI SELECT, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL
 
                 logger.info("CASE 30: MULTI SELECT, MULTI SELECT, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL");
 
@@ -633,7 +572,7 @@ public class OpenAlertCQLRead extends Processor {
         if (aggregationLevel != null && !aggregationLevel.isEmpty()) {
             nodeAndAggregationDetails.put("aggregationLevel", aggregationLevel);
             jobContext.setParameters("aggregationLevel", aggregationLevel);
-            logger.info("Aggregation Level '{}' Set to Job Context Successfully! ✅", aggregationLevel);
+            logger.info("Aggregation Level '{}' Set to Job Context Successfully!", aggregationLevel);
         }
 
         return cqlResultDataFrame;
@@ -932,11 +871,10 @@ public class OpenAlertCQLRead extends Processor {
         String domain = reportWidgetDetails.get("DOMAIN");
         String vendor = reportWidgetDetails.get("VENDOR");
         String technology = reportWidgetDetails.get("TECHNOLOGY");
-        String timestamp = jobContext.getParameter("TIMESTAMP"); // 2025-01-19 00:00:00.000000+0000
-        // DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd
-        // HH:mm:ss.SSSSSSxxxx");
-        // OffsetDateTime odt = OffsetDateTime.parse(timestamp, formatter);
-        // String date = odt.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String timestamp = jobContext.getParameter("TIMESTAMP");
+
+        logger.info("Processing Parameters - Domain: {}, Vendor: {}, Technology: {}, Timestamp: {}", domain, vendor,
+                technology, timestamp);
 
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSxxxx");
         OffsetDateTime odt = OffsetDateTime.parse(timestamp, formatter);
@@ -946,54 +884,26 @@ public class OpenAlertCQLRead extends Processor {
         String node = nodeAndAggregationDetails.get("node");
         String netype = getNodeName(node);
 
-        String datalevel = "";
-
-        StringBuilder mysqlQuery = new StringBuilder()
-                .append("SELECT DISTINCT CONCAT(TECHNOLOGY, IF(ROWKEY_TECHNOLOGY IS NOT NULL, '_', ''), ")
-                .append("COALESCE(NETWORK_TYPE, '')) AS rowKeyAppender ")
-                .append("FROM PM_NODE_VENDOR ")
-                .append("WHERE domain = '").append(domain).append("' ")
-                .append("AND vendor = '").append(vendor).append("' ")
-                .append("AND technology = '").append(technology).append("'");
-
-        logger.info("MySQL Query: {}", mysqlQuery.toString());
-
-        Dataset<Row> df = executeQuery(mysqlQuery.toString(), jobContext);
-
-        String dataLevelAppender = df.as(Encoders.STRING()).collectAsList().get(0);
+        String dataLevelAppender = getDataLevelAppender(domain, vendor, technology, jobContext);
         logger.info("Data Level Appender: {}", dataLevelAppender);
 
-        if (aggregationLevel.equals("L0")) {
-            datalevel = "L0" + "_" + dataLevelAppender;
-        } else if (aggregationLevel.equals("L1")) {
-            datalevel = "L1" + "_" + dataLevelAppender;
-        } else if (aggregationLevel.equals("L2")) {
-            datalevel = "L2" + "_" + dataLevelAppender;
-        } else if (aggregationLevel.equals("L3")) {
-            datalevel = "L3" + "_" + dataLevelAppender;
-        } else if (aggregationLevel.equals("L4")) {
-            datalevel = "L4" + "_" + dataLevelAppender;
-        } else {
-            datalevel = netype + "_" + dataLevelAppender;
-        }
+        String datalevel = (aggregationLevel != null && aggregationLevel.matches("L[0-4]"))
+                ? aggregationLevel + "_" + dataLevelAppender
+                : netype + "_" + dataLevelAppender;
 
-        logger.info("Data Level: {}", datalevel);
+        logger.info("Getting CQL Data for Selected Level with Data Level: {}", datalevel);
 
         String inClause = Arrays.stream(geoListArray)
                 .map(name -> "'" + name.replace("'", "''") + "'")
                 .collect(Collectors.joining(", "));
 
-        String cqlFilter = "";
-
-        cqlFilter = String.format(
+        String cqlFilter = String.format(
                 "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s'  AND date = '%s' AND nodename IN (%s) AND timestamp = '%s'",
                 domain, vendor, technology, datalevel, date, inClause, utcTimestampStr);
 
-        logger.info("🔍 CQL Filter With Nodename: {}", cqlFilter);
+        logger.info("CQL Filter With Nodename: {}", cqlFilter);
 
-        Dataset<Row> cqlDataDF = getCQLDataUsingSpark(cqlFilter, jobContext, reportWidgetDetails, extraParameters);
-
-        return cqlDataDF;
+        return getCQLDataUsingSpark(cqlFilter, jobContext, reportWidgetDetails, extraParameters);
     }
 
     public static String getNodeName(String nodeString) {
@@ -1037,6 +947,43 @@ public class OpenAlertCQLRead extends Processor {
                 "Getting CQL Data for Selected Level with Parameters - Domain: {}, Vendor: {}, Technology: {}, Timestamp: {}, Date: {}, NeType: {}, Node: {}, Aggregation Level: {}",
                 domain, vendor, technology, timestamp, date, netype, node, aggregationLevel);
 
+        String dataLevelAppender = getDataLevelAppender(domain, vendor, technology, jobContext);
+        logger.info("Data Level Appender: {}", dataLevelAppender);
+
+        String datalevel = (aggregationLevel != null && aggregationLevel.matches("L[0-4]"))
+                ? aggregationLevel + "_" + dataLevelAppender
+                : netype + "_" + dataLevelAppender;
+
+        logger.info("Getting CQL Data for Selected Level with Data Level: {}", datalevel);
+
+        try {
+
+            String cqlFilter = String.format(
+                    "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s' AND date = '%s'%s AND timestamp = '%s'",
+                    domain,
+                    vendor,
+                    technology,
+                    datalevel,
+                    date,
+                    "L0".equals(aggregationLevel) ? " AND nodename = 'India'" : "",
+                    timestamp);
+
+            logger.info("CQL Filter: {}", cqlFilter);
+
+            df = getCQLDataUsingSpark(cqlFilter, jobContext, reportWidgetDetails, extraParameters);
+
+        } catch (Exception e) {
+            logger.error("Error in Getting CQL Data for Selected Level, Message: {}, Error: {}", e.getMessage(), e);
+        }
+
+        return df;
+    }
+
+    private static String getDataLevelAppender(String domain, String vendor, String technology, JobContext jobContext) {
+        if (domain == null || vendor == null || technology == null) {
+            throw new IllegalArgumentException("Domain, Vendor, and Technology Must Not Be Null");
+        }
+
         StringBuilder mysqlQuery = new StringBuilder()
                 .append("SELECT DISTINCT CONCAT(TECHNOLOGY, IF(ROWKEY_TECHNOLOGY IS NOT NULL, '_', ''), ")
                 .append("COALESCE(NETWORK_TYPE, '')) AS rowKeyAppender ")
@@ -1048,65 +995,15 @@ public class OpenAlertCQLRead extends Processor {
         logger.info("MySQL Query: {}", mysqlQuery.toString());
 
         Dataset<Row> rowKeyAppenderDF = executeQuery(mysqlQuery.toString(), jobContext);
-
-        String dataLevelAppender = "";
         List<String> appenderList = rowKeyAppenderDF.as(Encoders.STRING()).collectAsList();
         if (appenderList != null && !appenderList.isEmpty()) {
-            dataLevelAppender = appenderList.get(0);
+            return appenderList.get(0);
         } else {
             logger.error(
-                    "No Data Level Appender Found. Please Ensure Data Level Appender is Present in the DataFrame Before Processing.");
+                    "No Data Level Appender Found for Domain={}, Vendor={}, Technology={}",
+                    domain, vendor, technology);
+            return "";
         }
-
-        logger.info("Data Level Appender: {}", dataLevelAppender);
-
-        String datalevel = "";
-        String nodename = "";
-
-        if (aggregationLevel.equals("L0")) {
-            datalevel = "L0" + "_" + dataLevelAppender;
-            nodename = "India";
-        } else if (aggregationLevel.equals("L1")) {
-            datalevel = "L1" + "_" + dataLevelAppender;
-        } else if (aggregationLevel.equals("L2")) {
-            datalevel = "L2" + "_" + dataLevelAppender;
-        } else if (aggregationLevel.equals("L3")) {
-            datalevel = "L3" + "_" + dataLevelAppender;
-        } else if (aggregationLevel.equals("L4")) {
-            datalevel = "L4" + "_" + dataLevelAppender;
-        } else {
-            datalevel = netype + "_" + dataLevelAppender;
-        }
-
-        logger.info("Getting CQL Data for Selected Level with Data Level: {}", datalevel);
-
-        try {
-
-            String cqlFilter = "";
-
-            if (aggregationLevel.equals("L0")) {
-
-                cqlFilter = String.format(
-                        "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s'  AND date = '%s' AND nodename = '%s' AND timestamp = '%s'",
-                        domain, vendor, technology, datalevel, date, nodename, timestamp);
-
-            } else {
-
-                cqlFilter = String.format(
-                        "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s' AND date = '%s' AND timestamp = '%s'",
-                        domain, vendor, technology, datalevel, date, timestamp);
-
-            }
-
-            logger.info("CQL Filter: {}", cqlFilter);
-
-            df = getCQLDataUsingSpark(cqlFilter, jobContext, reportWidgetDetails, extraParameters);
-
-        } catch (Exception e) {
-            logger.error("Error in Getting CQL Data for Selected Level, Message: {}, Error: {}", e.getMessage(), e);
-        }
-
-        return df;
     }
 
     private static Dataset<Row> executeQuery(String sqlQuery, JobContext jobContext) {
@@ -1135,21 +1032,27 @@ public class OpenAlertCQLRead extends Processor {
     private JobContext setSparkConf(JobContext jobContext) {
 
         jobContext.sqlctx().setConf("spark.sql.caseSensitive", "true");
+        jobContext.sqlctx().setConf("spark.sql.session.timeZone", "UTC");
+
         jobContext.sqlctx().setConf("spark.cassandra.connection.localDC", sparkCassandraDatacenter);
         jobContext.sqlctx().setConf("spark.cassandra.connection.host", sparkCassandraHost);
         jobContext.sqlctx().setConf("spark.cassandra.connection.port", sparkCassandraPort);
         jobContext.sqlctx().setConf("spark.cassandra.auth.username", sparkCassandraUsername);
         jobContext.sqlctx().setConf("spark.cassandra.auth.password", sparkCassandraPassword);
+
         jobContext.sqlctx().setConf("spark.sql.catalog.ybcatalog",
                 "com.datastax.spark.connector.datasource.CassandraCatalog");
-        jobContext.sqlctx().setConf("spark.cassandra.output.ignoreNulls", "true");
         jobContext.sqlctx().setConf("spark.cassandra.query.retry.count", "10");
+        jobContext.sqlctx().setConf("spark.cassandra.connection.remoteConnectionsPerExecutor", "5");
+
+        jobContext.sqlctx().setConf("spark.cassandra.output.ignoreNulls", "true");
         jobContext.sqlctx().setConf("spark.cassandra.output.batch.size.rows", "500");
         jobContext.sqlctx().setConf("spark.cassandra.output.concurrent.writes", "3");
-        jobContext.sqlctx().setConf("spark.cassandra.connection.remoteConnectionsPerExecutor", "5");
+
         jobContext.sqlctx().setConf("spark.jdbc.url", sparkPMJdbcUrl);
         jobContext.sqlctx().setConf("spark.jdbc.user", sparkPMJdbcUsername);
         jobContext.sqlctx().setConf("spark.jdbc.password", sparkPMJdbcPassword);
+
         return jobContext;
     }
 
