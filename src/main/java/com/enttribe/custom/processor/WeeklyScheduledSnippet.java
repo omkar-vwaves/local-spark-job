@@ -19,14 +19,14 @@ import org.apache.nifi.processor.Relationship;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class WeeklyScheduledTest02 implements Runnable {
+public class WeeklyScheduledSnippet implements Runnable {
 
-    private static final Logger logger = LoggerFactory.getLogger(WeeklyScheduledTest02.class);
+    private static final Logger logger = LoggerFactory.getLogger(WeeklyScheduledSnippet.class);
     private static final String DEFAULT_WEEKLY_SCHEDULE_DAY = "Monday";
 
     @Override
     public void run() {
-        logger.info("WeeklyScheduledTest02 Executed Started!");
+        logger.info("WeeklyScheduledSnippet Executed Started!");
     }
 
     public static final Relationship RELATIONSHIP_SUCCESS = new Relationship.Builder()
@@ -44,15 +44,15 @@ public class WeeklyScheduledTest02 implements Runnable {
 
         long startTime = System.currentTimeMillis();
 
-        logger.info("========== WeeklyScheduledTest02 Execution Started ==========");
+        logger.info("========== WeeklyScheduledSnippet Execution Started ==========");
 
         try {
             flowFile = processScheduledReports(flowFile, session, connection);
         } catch (Exception e) {
-            logger.info("Exception Occured in WeeklyScheduledTest02 Processor: ", e);
+            logger.info("Exception Occured in WeeklyScheduledSnippet Processor: ", e);
             Map<String, String> attributes = new LinkedHashMap<>();
             attributes.put("READY_TO_START", "false");
-            attributes.put("failure.reason", "Exception Occured in WeeklyScheduledTest02 Processor: ");
+            attributes.put("failure.reason", "Exception Occured in WeeklyScheduledSnippet Processor: ");
             attributes.put("failure.details", e.getMessage());
             flowFile = session.putAllAttributes(flowFile, attributes);
             logger.info("Transferred New FlowFile to Failure!");
@@ -65,7 +65,7 @@ public class WeeklyScheduledTest02 implements Runnable {
         long seconds = totalSeconds % 60;
         logger.info(String.format("Total Time Consumed For Execution: %02d:%02d (MM:SS)", minutes, seconds));
 
-        logger.info("========== WeeklyScheduledTest02 Execution Completed ==========");
+        logger.info("========== WeeklyScheduledSnippet Execution Completed ==========");
 
         String readyToStart = flowFile.getAttribute("READY_TO_START");
         if (readyToStart != null && readyToStart.equals("true")) {

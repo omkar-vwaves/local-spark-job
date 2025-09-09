@@ -19,14 +19,14 @@ import org.apache.nifi.processor.Relationship;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class DailyScheduledTest35 implements Runnable {
+public class DailyScheduledSnippet implements Runnable {
 
-    private static final Logger logger = LoggerFactory.getLogger(DailyScheduledTest35.class);
+    private static final Logger logger = LoggerFactory.getLogger(DailyScheduledSnippet.class);
     private static final String DEFAULT_DAILY_SCHEDULE_HOUR = "00:00";
 
     @Override
     public void run() {
-        logger.info("DailyScheduledTest35 Executed Started!");
+        logger.info("DailyScheduledSnippet Executed Started!");
     }
 
     public static final Relationship RELATIONSHIP_SUCCESS = new Relationship.Builder()
@@ -44,15 +44,15 @@ public class DailyScheduledTest35 implements Runnable {
 
         long startTime = System.currentTimeMillis();
 
-        logger.info("========== DailyScheduledTest35 Execution Started ==========");
+        logger.info("========== DailyScheduledSnippet Execution Started ==========");
 
         try {
             flowFile = processScheduledReports(flowFile, session, connection);
         } catch (Exception e) {
-            logger.info("Exception Occured in DailyScheduledTest35 Processor: ", e);
+            logger.info("Exception Occured in DailyScheduledSnippet Processor: ", e);
             Map<String, String> attributes = new LinkedHashMap<>();
             attributes.put("READY_TO_START", "false");
-            attributes.put("failure.reason", "Exception Occured in DailyScheduledTest35 Processor: ");
+            attributes.put("failure.reason", "Exception Occured in DailyScheduledSnippet Processor: ");
             attributes.put("failure.details", e.getMessage());
             flowFile = session.putAllAttributes(flowFile, attributes);
             logger.info("Transferred New FlowFile to Failure!");
@@ -65,7 +65,7 @@ public class DailyScheduledTest35 implements Runnable {
         long seconds = totalSeconds % 60;
         logger.info(String.format("Total Time Consumed For Execution: %02d:%02d (MM:SS)", minutes, seconds));
 
-        logger.info("========== DailyScheduledTest35 Execution Completed ==========");
+        logger.info("========== DailyScheduledSnippet Execution Completed ==========");
 
         String readyToStart = flowFile.getAttribute("READY_TO_START");
         if (readyToStart != null && readyToStart.equals("true")) {

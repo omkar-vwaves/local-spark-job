@@ -1,8 +1,6 @@
 package com.enttribe.pm.job.report.common;
 
 import java.util.Map;
-import java.util.stream.Collectors;
-
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.slf4j.Logger;

@@ -19,14 +19,14 @@ import org.apache.nifi.processor.Relationship;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class HourlyScheduledTest02 implements Runnable {
+public class HourlyScheduledSnippet implements Runnable {
 
-    private static final Logger logger = LoggerFactory.getLogger(HourlyScheduledTest02.class);
+    private static final Logger logger = LoggerFactory.getLogger(HourlyScheduledSnippet.class);
     private static final String DEFAULT_HOURLY_SCHEDULE_HOUR = "00:00";
 
     @Override
     public void run() {
-        logger.info("HourlyScheduledTest02 Executed Started!");
+        logger.info("HourlyScheduledSnippet Executed Started!");
     }
 
     public static final Relationship RELATIONSHIP_SUCCESS = new Relationship.Builder()
@@ -44,15 +44,15 @@ public class HourlyScheduledTest02 implements Runnable {
 
         long startTime = System.currentTimeMillis();
 
-        logger.info("========== HourlyScheduledTest02 Execution Started ==========");
+        logger.info("========== HourlyScheduledSnippet Execution Started ==========");
 
         try {
             flowFile = processScheduledReports(flowFile, session, connection);
         } catch (Exception e) {
-            logger.info("Exception Occured in HourlyScheduledTest02 Processor: ", e);
+            logger.info("Exception Occured in HourlyScheduledSnippet Processor: ", e);
             Map<String, String> attributes = new LinkedHashMap<>();
             attributes.put("READY_TO_START", "false");
-            attributes.put("failure.reason", "Exception Occured in HourlyScheduledTest02 Processor: ");
+            attributes.put("failure.reason", "Exception Occured in HourlyScheduledSnippet Processor: ");
             attributes.put("failure.details", e.getMessage());
             flowFile = session.putAllAttributes(flowFile, attributes);
             logger.info("Transferred New FlowFile to Failure!");
@@ -65,7 +65,7 @@ public class HourlyScheduledTest02 implements Runnable {
         long seconds = totalSeconds % 60;
         logger.info(String.format("Total Time Consumed For Execution: %02d:%02d (MM:SS)", minutes, seconds));
 
-        logger.info("========== HourlyScheduledTest02 Execution Completed ==========");
+        logger.info("========== HourlyScheduledSnippet Execution Completed ==========");
 
         String readyToStart = flowFile.getAttribute("READY_TO_START");
         if (readyToStart != null && readyToStart.equals("true")) {
@@ -292,11 +292,11 @@ public class HourlyScheduledTest02 implements Runnable {
                     }
                 }
             }
-            
+
             if (scheduleHours.isEmpty()) {
                 scheduleHours.add(DEFAULT_HOURLY_SCHEDULE_HOUR);
             }
-            
+
             return scheduleHours;
         } catch (Exception e) {
             logger.info("Error Extracting Schedule Hours From Configuration: {}", configuration, e);
@@ -335,13 +335,13 @@ public class HourlyScheduledTest02 implements Runnable {
             String currentHour = getCurrentHourFromContext(inputFlowFile);
 
             if (!isCurrentHourScheduled(currentHour, scheduledHours)) {
-                logger.info("REPORT_WIDGET_ID_PK: {}, Current Hour '{}' Is Not In Scheduled Hours: {}", 
+                logger.info("REPORT_WIDGET_ID_PK: {}, Current Hour '{}' Is Not In Scheduled Hours: {}",
                         reportWidgetId, currentHour, scheduledHours);
-                
+
                 Map<String, String> attributes = new LinkedHashMap<>();
                 attributes.put("READY_TO_START", "false");
                 attributes.put("failure.reason", "Current Hour Not Scheduled!");
-                attributes.put("failure.details", 
+                attributes.put("failure.details",
                         "Current Hour '" + currentHour + "' Is Not In Scheduled Hours: " + scheduledHours);
                 inputFlowFile = session.putAllAttributes(inputFlowFile, attributes);
                 return inputFlowFile;
@@ -349,14 +349,15 @@ public class HourlyScheduledTest02 implements Runnable {
 
             boolean isAlreadyProcessed = isAlreadyProcessedForHour(reportWidgetId, currentHour, connection);
             if (isAlreadyProcessed) {
-                logger.info("Report Already Processed For Hour {}: REPORT_WIDGET_ID_PK={}", currentHour, reportWidgetId);
+                logger.info("Report Already Processed For Hour {}: REPORT_WIDGET_ID_PK={}", currentHour,
+                        reportWidgetId);
 
                 Map<String, String> attributes = new LinkedHashMap<>();
                 attributes.put("READY_TO_START", "false");
                 attributes.put("failure.reason", "Report Already Processed For This Hour!");
                 attributes.put("failure.details",
-                        "Report with ID " + reportWidgetId + " Has Already Processed For Hour " + currentHour + 
-                        " on " + java.time.LocalDate.now());
+                        "Report with ID " + reportWidgetId + " Has Already Processed For Hour " + currentHour +
+                                " on " + java.time.LocalDate.now());
                 inputFlowFile = session.putAllAttributes(inputFlowFile, attributes);
                 logger.info("Transferred New FlowFile to Failure!");
                 return inputFlowFile;
@@ -609,17 +610,18 @@ public class HourlyScheduledTest02 implements Runnable {
                 try (ResultSet rs = stmt.executeQuery()) {
                     if (rs.next()) {
                         int count = rs.getInt("COUNT");
-                        logger.info("REPORT_WIDGET_ID_PK: {}, Already Processed For Hour {} Count: {}", 
+                        logger.info("REPORT_WIDGET_ID_PK: {}, Already Processed For Hour {} Count: {}",
                                 reportWidgetId, currentHour, count);
                         return count > 0;
                     }
                 }
             }
         } catch (SQLException e) {
-            logger.info("SQL Error Checking if Report Already Processed For Hour {} for REPORT_WIDGET_ID_PK {}: {}", 
+            logger.info("SQL Error Checking if Report Already Processed For Hour {} for REPORT_WIDGET_ID_PK {}: {}",
                     currentHour, reportWidgetId, e.getMessage());
         } catch (Exception e) {
-            logger.info("Unexpected Error Checking if Report Already Processed For Hour {} for REPORT_WIDGET_ID_PK {}: {}", 
+            logger.info(
+                    "Unexpected Error Checking if Report Already Processed For Hour {} for REPORT_WIDGET_ID_PK {}: {}",
                     currentHour, reportWidgetId, e.getMessage());
         }
         return false;
