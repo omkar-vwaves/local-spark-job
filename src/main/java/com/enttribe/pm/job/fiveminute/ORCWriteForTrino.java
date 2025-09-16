@@ -5,9 +5,12 @@ import java.util.Arrays;
 import java.util.List;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.Column;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.SaveMode;
 
 import com.enttribe.sparkrunner.annotations.Dynamic;
 import com.enttribe.sparkrunner.context.JobContext;
@@ -32,7 +35,6 @@ public class ORCWriteForTrino extends Processor {
 
     public ORCWriteForTrino() {
         super();
-        logger.info("ORCWriteForTrino: Default Constructor Called");
     }
 
     public ORCWriteForTrino(Dataset<Row> dataframe, int processorId, String processorName, String partitionBy,
@@ -45,17 +47,12 @@ public class ORCWriteForTrino extends Processor {
         this.path = path.toLowerCase();
         this.saveMode = saveMode;
         this.numPartition = numPartition;
-
-        logger.info(
-                "ORCWriteForTrino Initialized with Parameters - ProcessorId: {}, ProcessorName: {}, PartitionBy: {}, CompressionType: {}, Path: {}, SaveMode: {}, NumPartition: {}",
-                processorId, processorName, this.partitionBy, this.compressionType, this.path, this.saveMode,
-                this.numPartition);
     }
 
     @Override
     public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) {
 
-        logger.info("ORCWriteForTrino Execution Started :: ");
+        logger.info("ORCWriteForTrino Execution Started!");
 
         try {
 
@@ -69,26 +66,18 @@ public class ORCWriteForTrino extends Processor {
                     domain, vendor, technology, emsType, sequenceno);
 
             StringBuilder mapQuery = new StringBuilder();
-            for (int i = 1; i <= sequenceno; i++) {
+            for (int i = 1; i <= 50; i++) {
                 mapQuery.append("rawcounters['").append(i).append("'] AS `C").append(i).append("`, ");
             }
 
             String mapSelect = StringUtils.substringBeforeLast(mapQuery.toString(), ",");
 
-            // String query = "SELECT finalKey, DateKey, HourKey, QuarterKey, fiveminutekey,
-            // pmemsid, nename, neid, interface_name AS interfacename, "
-            // + mapSelect + " , frequency, '"
-            // + domain + "' AS domain, '" + vendor + "' AS vendor, '" + emsType + "' AS
-            // emstype, '" + technology
-            // + "' AS technology, date, time, ptime, categoryname FROM AllCounterData ";
-
-            // As Per Trino Table Schema
-            String query = "SELECT finalKey, DateKey, HourKey, QuarterKey, pmemsid, nename, neid, "
-                    + mapSelect + " , fiveminutekey, interface_name AS interfacename, frequency, '"
-                    + domain + "' AS domain, '" + vendor + "' AS vendor, '" + emsType + "' AS emstype, '" + technology
+            String query = "SELECT finalKey, DateKey, HourKey, QuarterKey, fiveminutekey, pmemsid, nename, neid, interface_name AS interfacename, "
+                    + mapSelect + " , frequency, '" + domain + "' AS domain, '" + vendor + "' AS vendor, '" + emsType
+                    + "' AS emstype, '" + technology
                     + "' AS technology, date, time, ptime, categoryname FROM AllCounterData ";
 
-            logger.info("🔍 Generated ORCWriteForTrino Query: {}", query);
+            logger.info("Generated ORCWriteForTrino Query: {}", query);
 
             Dataset<Row> finalDataFrame = this.dataFrame.sqlContext().sql(query);
             String counterPath = StringUtils.substringBeforeLast(this.path,
@@ -100,6 +89,8 @@ public class ORCWriteForTrino extends Processor {
             if (partitionBy != null && !partitionBy.trim().isEmpty() &&
                     this.saveMode != null && !this.saveMode.trim().isEmpty()) {
 
+                deleteExistingPartitionFiles(jobContext, finalDataFrame, partitionBy);
+
                 String[] colName = partitionBy.split(" ");
                 Column[] col = new Column[colName.length];
                 for (int i = 0; i < colName.length; i++) {
@@ -108,15 +99,20 @@ public class ORCWriteForTrino extends Processor {
                 }
 
                 finalDataFrame = finalDataFrame.repartition(Integer.valueOf(200), col);
-                logger.info("🔍 Repartitioned finalDataFrame with {} Partitions on Columns: {}", 200,
+                logger.info("Repartitioned finalDataFrame with {} Partitions on Columns: {}", 200,
                         Arrays.toString(colName));
 
+                jobContext.sqlctx().setConf("spark.sql.sources.partitionOverwriteMode", "dynamic");
                 finalDataFrame.write()
-                        .mode(this.saveMode)
+                        .option("spark.hadoop.fs.s3a.committer.name", "directory")
+                        .option("spark.hadoop.fs.s3a.committer.staging.conflict-mode", "replace")
+                        .option("spark.hadoop.fs.s3a.committer.staging.tmp.path", "/tmp/staging")
+                        .option("spark.sql.sources.partitionOverwriteMode", "dynamic")
+                        .mode(SaveMode.Overwrite)
                         .partitionBy(colName)
                         .orc(this.path);
 
-                logger.info("🔍 ORCWriteForTrino: Data Successfully Written to Path: {}", this.path);
+                logger.info("Data Successfully Written to Path: {}", this.path);
             }
 
         } catch (Exception e) {
@@ -124,7 +120,7 @@ public class ORCWriteForTrino extends Processor {
         }
 
         long endTime = System.currentTimeMillis();
-        logger.info("🔍 ORCWriteForTrino Execution Completed : {} Milliseconds", endTime - startTime);
+        logger.info("ORCWriteForTrino Execution Completed : {} Milliseconds", endTime - startTime);
 
         return this.dataFrame;
     }
@@ -137,5 +133,38 @@ public class ORCWriteForTrino extends Processor {
                     " : Path is : " + this.path + " that must not be " + this.path);
         }
         return list;
+    }
+
+    private void deleteExistingPartitionFiles(JobContext jobContext, Dataset<Row> dataframe, String partitionBy) {
+        try {
+            String[] colName = partitionBy.split(" ");
+
+            Dataset<Row> distinctPartitions = dataframe.selectExpr(colName).distinct();
+            List<Row> partitionRows = distinctPartitions.collectAsList();
+
+            Path basePath = new Path(this.path);
+            FileSystem fs = basePath.getFileSystem(jobContext.sqlctx().sparkContext().hadoopConfiguration());
+
+            for (Row partitionRow : partitionRows) {
+                StringBuilder partitionPath = new StringBuilder(this.path);
+
+                for (int i = 0; i < colName.length; i++) {
+                    String colValue = partitionRow.get(i) != null ? partitionRow.get(i).toString() : "null";
+                    partitionPath.append("/").append(colName[i]).append("=").append(colValue);
+                }
+
+                Path partitionDir = new Path(partitionPath.toString());
+
+                if (fs.exists(partitionDir)) {
+                    logger.info("Deleting Existing Partition Directory: {}", partitionDir);
+                    fs.delete(partitionDir, true);
+                }
+            }
+
+            logger.info("Successfully Deleted Existing Partition Files for Overwrite");
+
+        } catch (Exception e) {
+            logger.info("Failed to Delete Existing Partition Files: {}", e.getMessage());
+        }
     }
 }

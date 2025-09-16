@@ -1421,7 +1421,7 @@ public class CustomCQLRead extends Processor {
 
                     cqlFilter = String.format(
                             "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s' AND timestamp <= TIMESTAMP '%s' AND timestamp >= TIMESTAMP '%s' AND date IN (%s)",
-                            domain, vendor, technology, datalevel, startTime, endTime, dateInClause);
+                            domain, vendor, technology, datalevel, endTime, startTime, dateInClause);
                 }
 
             }

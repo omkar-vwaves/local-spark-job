@@ -5,12 +5,13 @@ import java.util.Arrays;
 import java.util.List;
 
 import org.apache.commons.lang3.StringUtils;
-import org.apache.spark.api.java.StorageLevels;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.Column;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.SaveMode;
 import org.apache.spark.storage.StorageLevel;
-
 import com.enttribe.sparkrunner.annotations.Dynamic;
 import com.enttribe.sparkrunner.context.JobContext;
 import com.enttribe.sparkrunner.processors.Processor;
@@ -34,7 +35,6 @@ public class ORCWriteForTrino extends Processor {
 
     public ORCWriteForTrino() {
         super();
-        logger.info("ORCWriteForTrino: Default Constructor Called");
     }
 
     public ORCWriteForTrino(Dataset<Row> dataframe, int processorId, String processorName, String partitionBy,
@@ -47,17 +47,12 @@ public class ORCWriteForTrino extends Processor {
         this.path = path.toLowerCase();
         this.saveMode = saveMode;
         this.numPartition = numPartition;
-
-        logger.info(
-                "ORCWriteForTrino Initialized with Parameters - ProcessorId: {}, ProcessorName: {}, PartitionBy: {}, CompressionType: {}, Path: {}, SaveMode: {}, NumPartition: {}",
-                processorId, processorName, this.partitionBy, this.compressionType, this.path, this.saveMode,
-                this.numPartition);
     }
 
     @Override
     public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) {
 
-        logger.info("ORCWriteForTrino Execution Started :: ");
+        logger.info("ORCWriteForTrino Execution Started!");
 
         try {
 
@@ -65,6 +60,7 @@ public class ORCWriteForTrino extends Processor {
             String vendor = jobContext.getParameter("VENDOR");
             String technology = jobContext.getParameter("TECHNOLOGY");
             String emsType = jobContext.getParameter("emsType");
+            emsType = emsType == null ? "NA" : emsType;
             Integer sequenceno = Integer.valueOf(jobContext.getParameter("sequenceno"));
 
             logger.info("Received Parameters - Domain: {}, Vendor: {}, Technology: {}, EmsType: {}, SequenceNo: {}",
@@ -76,17 +72,8 @@ public class ORCWriteForTrino extends Processor {
             }
 
             String mapSelect = StringUtils.substringBeforeLast(mapQuery.toString(), ",");
-
-            // String query = "SELECT finalKey, DateKey, HourKey, QuarterKey, fiveminutekey,
-            // pmemsid, nename, neid, interface_name AS interfacename, "
-            // + mapSelect + " , frequency, '"
-            // + domain + "' AS domain, '" + vendor + "' AS vendor, '" + emsType + "' AS
-            // emstype, '" + technology
-            // + "' AS technology, date, time, ptime, categoryname FROM AllCounterData ";
-
-            // As Per Trino Table Schema
             String query = "SELECT finalKey, DateKey, HourKey, QuarterKey, pmemsid, nename, neid, "
-                    + mapSelect + " , fiveminutekey, interface_name AS interfacename,  frequency, '"
+                    + mapSelect + " , fiveminutekey, interface_name AS interfacename, frequency, '"
                     + domain + "' AS domain, '" + vendor + "' AS vendor, '" + emsType + "' AS emstype, '" + technology
                     + "' AS technology, date, time, ptime, categoryname FROM AllCounterData ";
 
@@ -94,15 +81,18 @@ public class ORCWriteForTrino extends Processor {
 
             Dataset<Row> finalDataFrame = this.dataFrame.sqlContext().sql(query);
             finalDataFrame.persist(StorageLevel.MEMORY_AND_DISK());
-            finalDataFrame.createOrReplaceTempView("ORCTemp");
+            finalDataFrame.createOrReplaceTempView("orcTemp");
             String counterPath = StringUtils.substringBeforeLast(this.path,
                     "parquefile");
             this.path = counterPath;
 
             logger.info("Adjusted Output Path: {}", this.path);
+            logger.info("Trino Orc File Count={}", finalDataFrame.count());
 
             if (partitionBy != null && !partitionBy.trim().isEmpty() &&
                     this.saveMode != null && !this.saveMode.trim().isEmpty()) {
+
+                deleteExistingPartitionFiles(jobContext, finalDataFrame, partitionBy);
 
                 String[] colName = partitionBy.split(" ");
                 Column[] col = new Column[colName.length];
@@ -112,27 +102,23 @@ public class ORCWriteForTrino extends Processor {
                 }
 
                 finalDataFrame = finalDataFrame.repartition(Integer.valueOf(200), col);
-                logger.error("Repartitioned finalDataFrame with {} Partitions on Columns: {}", 200,
+                logger.info("Repartitioned finalDataFrame by Columns: {}",
                         Arrays.toString(colName));
 
-                logger.info("ORCWriteForTrino: DataFrame View (Showing 5 Rows):: ");
-                
-                finalDataFrame.show();
-
+                jobContext.sqlctx().setConf("spark.sql.sources.partitionOverwriteMode", "dynamic");
                 finalDataFrame.write()
-                        .mode(this.saveMode)
+                        .option("spark.hadoop.fs.s3a.committer.name", "directory")
+                        .option("spark.hadoop.fs.s3a.committer.staging.conflict-mode", "replace")
+                        .option("spark.hadoop.fs.s3a.committer.staging.tmp.path", "/tmp/staging")
+                        .option("spark.sql.sources.partitionOverwriteMode", "dynamic")
+                        .mode(SaveMode.Overwrite)
                         .partitionBy(colName)
                         .orc(this.path);
 
-                logger.error("ORCWriteForTrino: Data Successfully Written to Path: {}", this.path);
+                logger.info("Data Successfully Written to Path: {}", this.path);
             } else {
                 logger.info(
                         "PartitionBy or SaveMode is not properly configured. Skipping ORCWriteForTrino Operation.");
-            }
-
-            if (this.dataFrame != null) {
-                long count = this.dataFrame.count();
-                logger.info("ORCWriteForTrino - Result Row Count Size : {}", count);
             }
 
         } catch (Exception e) {
@@ -145,11 +131,41 @@ public class ORCWriteForTrino extends Processor {
         return this.dataFrame;
     }
 
+    private void deleteExistingPartitionFiles(JobContext jobContext, Dataset<Row> dataframe, String partitionBy) {
+        try {
+            String[] colName = partitionBy.split(" ");
+            Dataset<Row> distinctPartitions = dataframe.selectExpr(colName).distinct();
+            List<Row> partitionRows = distinctPartitions.collectAsList();
+            Path basePath = new Path(this.path);
+            FileSystem fs = basePath.getFileSystem(jobContext.sqlctx().sparkContext().hadoopConfiguration());
+
+            for (Row partitionRow : partitionRows) {
+                StringBuilder partitionPath = new StringBuilder(this.path);
+                for (int i = 0; i < colName.length; i++) {
+                    String colValue = partitionRow.get(i) != null ? partitionRow.get(i).toString() : "null";
+                    partitionPath.append("/").append(colName[i]).append("=").append(colValue);
+                }
+
+                Path partitionDir = new Path(partitionPath.toString());
+
+                if (fs.exists(partitionDir)) {
+                    logger.info("Deleting Existing Partition Directory: {}", partitionDir);
+                    fs.delete(partitionDir, true);
+                }
+            }
+
+            logger.info("Successfully Deleted Existing Partition Files for Overwrite");
+
+        } catch (Exception e) {
+            logger.info("Failed to Delete Existing Partition Files: {}", e.getMessage());
+        }
+    }
+
     @Override
     public List<String> validProcessorConfigurations() {
         List<String> list = new ArrayList<>();
         if (this.path == null || this.path.trim().isEmpty()) {
-            list.add("Exception in ParquetWrite Processor Name : " + this.processorName +
+            list.add("Exception in ORCWriteForTrino Processor Name : " + this.processorName +
                     " : Path is : " + this.path + " that must not be " + this.path);
         }
         return list;
