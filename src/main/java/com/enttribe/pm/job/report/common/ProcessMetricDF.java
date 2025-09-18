@@ -177,27 +177,27 @@ public class ProcessMetricDF extends Processor {
             if ("L0".equals(aggregationLevel)) {
 
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, '-' AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS NEID, nodename AS NAM, kpijson FROM InputCQLData");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, '-' AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else if ("L1".equals(aggregationLevel)) {
 
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, nodename AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS NEID, nodename AS NAM, kpijson FROM InputCQLData");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, nodename AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else if ("L2".equals(aggregationLevel)) {
 
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(nodename) AS DL2, '-' AS DL3, '-' AS DL4, '-' AS NEID, nodename AS NAM, kpijson FROM InputCQLData");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(nodename) AS DL2, '-' AS DL3, '-' AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else if ("L3".equals(aggregationLevel)) {
 
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, UPPER(nodename) AS DL3, '-' AS DL4, '-' AS NEID, nodename AS NAM, kpijson FROM InputCQLData");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, UPPER(nodename) AS DL3, '-' AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else if ("L4".equals(aggregationLevel)) {
 
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, UPPER(metajson['DL3']) AS DL3, UPPER(nodename) AS DL4, '-' AS NEID, nodename AS NAM, kpijson FROM InputCQLData");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, UPPER(metajson['DL3']) AS DL3, UPPER(nodename) AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else {
 
@@ -230,6 +230,13 @@ public class ProcessMetricDF extends Processor {
 
                                 "kpijson " +
                                 "FROM InputCQLData ORDER BY timestamp ASC");
+
+                String selectedHeader = extraParametersMap.get("selectedHeader");
+                if (selectedHeader.equalsIgnoreCase("default") && metaColumnsMap.containsKey("NODENAME")) {
+                    metaColumnsMap.remove("NODENAME");
+                    metaColumnsMap.put("ENTITY_ID", "Node");
+                    metaColumnsMap.put("ENTITY_NAME", "Node Name");
+                }
 
             }
 

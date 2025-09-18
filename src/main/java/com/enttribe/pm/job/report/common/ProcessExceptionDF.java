@@ -520,7 +520,7 @@ public class ProcessExceptionDF extends Processor {
                 // HR, '-' AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS NEID,
                 // UPPER(metajson['NAM']) AS NAM, kpijson FROM InputCQLData");
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, '-' AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS NEID, UPPER(metajson['ENTITY_NAME']) AS NAM, kpijson FROM InputCQLData");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, '-' AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else if ("L1".equals(aggregationLevel)) {
 
@@ -530,7 +530,7 @@ public class ProcessExceptionDF extends Processor {
                 // '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS NEID, UPPER(metajson['NAM']) AS
                 // NAM, kpijson FROM InputCQLData");
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, metajson['DT'] AS DT, metajson['HR'] AS HR, UPPER(metajson['DL1']) AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS NEID, UPPER(metajson['ENTITY_NAME']) AS NAM, kpijson FROM InputCQLData");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, nodename AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else if ("L2".equals(aggregationLevel)) {
 
@@ -540,7 +540,7 @@ public class ProcessExceptionDF extends Processor {
                 // UPPER(metajson['DL2']) AS DL2, '-' AS DL3, '-' AS DL4, '-' AS NEID,
                 // UPPER(metajson['NAM']) AS NAM, kpijson FROM InputCQLData");
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, metajson['DT'] AS DT, metajson['HR'] AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, '-' AS DL3, '-' AS DL4, '-' AS NEID, UPPER(metajson['ENTITY_NAME']) AS NAM, kpijson FROM InputCQLData");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(nodename) AS DL2, '-' AS DL3, '-' AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else if ("L3".equals(aggregationLevel)) {
 
@@ -550,7 +550,7 @@ public class ProcessExceptionDF extends Processor {
                 // UPPER(metajson['DL2']) AS DL2, UPPER(metajson['DL3']) AS DL3, '-' AS DL4, '-'
                 // AS NEID, UPPER(metajson['NAM']) AS NAM, kpijson FROM InputCQLData");
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, metajson['DT'] AS DT, metajson['HR'] AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, UPPER(metajson['DL3']) AS DL3, '-' AS DL4, '-' AS NEID, UPPER(metajson['ENTITY_NAME']) AS NAM, kpijson FROM InputCQLData");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, UPPER(nodename) AS DL3, '-' AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else if ("L4".equals(aggregationLevel)) {
 
@@ -562,7 +562,7 @@ public class ProcessExceptionDF extends Processor {
                 // kpijson FROM InputCQLData");
 
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, metajson['DT'] AS DT, metajson['HR'] AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, UPPER(metajson['DL3']) AS DL3, UPPER(metajson['DL4']) AS DL4, '-' AS NEID, UPPER(metajson['ENTITY_NAME']) AS NAM, kpijson FROM InputCQLData");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, UPPER(metajson['DL3']) AS DL3, UPPER(nodename) AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
             } else {
 
                 // inputDataset = jobContext.sqlctx().sql(
@@ -572,7 +572,41 @@ public class ProcessExceptionDF extends Processor {
                 // UPPER(metajson['DL4']) AS DL4, metajson['NEID'] AS NEID,
                 // UPPER(metajson['NAM']) AS NAM, kpijson FROM InputCQLData");
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, metajson['DT'] AS DT, metajson['HR'] AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, UPPER(metajson['DL3']) AS DL3, UPPER(metajson['DL4']) AS DL4, metajson['ENTITY_ID'] AS ENTITY_ID, UPPER(metajson['ENTITY_NAME']) AS ENTITY_NAME, kpijson FROM InputCQLData");
+                        "SELECT " +
+                                "'INDIA' AS COUNTRY, " +
+                                "UPPER(nodename) AS nodename, " +
+                                "datalevel AS level, " +
+                                "DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, " +
+                                "UPPER(metajson['DL1']) AS DL1, " +
+                                "UPPER(metajson['DL2']) AS DL2, " +
+                                "UPPER(metajson['DL3']) AS DL3, " +
+                                "UPPER(metajson['DL4']) AS DL4, " +
+
+                                // ENTITY_ID fallback logic
+                                "CASE " +
+                                "WHEN metajson['ENTITY_ID'] IS NULL OR TRIM(metajson['ENTITY_ID']) = '' OR metajson['ENTITY_ID'] = '-' "
+                                +
+                                "THEN metajson['NEID'] " +
+                                "ELSE metajson['ENTITY_ID'] " +
+                                "END AS ENTITY_ID, " +
+
+                                // ENTITY_NAME fallback logic
+                                "CASE " +
+                                "WHEN metajson['ENTITY_NAME'] IS NULL OR TRIM(metajson['ENTITY_NAME']) = '' OR metajson['ENTITY_NAME'] = '-' "
+                                +
+                                "THEN UPPER(metajson['NAM']) " +
+                                "ELSE UPPER(metajson['ENTITY_NAME']) " +
+                                "END AS ENTITY_NAME, " +
+
+                                "kpijson " +
+                                "FROM InputCQLData ORDER BY timestamp ASC");
+
+                String selectedHeader = extraParametersMap.get("selectedHeader");
+                if (selectedHeader.equalsIgnoreCase("default") && metaColumnsMap.containsKey("NODENAME")) {
+                    metaColumnsMap.remove("NODENAME");
+                    metaColumnsMap.put("ENTITY_ID", "Node");
+                    metaColumnsMap.put("ENTITY_NAME", "Node Name");
+                }
             }
 
             for (String colName : inputDataset.columns()) {

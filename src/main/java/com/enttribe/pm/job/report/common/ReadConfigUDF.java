@@ -113,12 +113,12 @@ public class ReadConfigUDF implements
             metaColumnsMap.put("HR", "Time");
         }
 
-        String selectedHeader = extraParametersMap.get("selectedHeader");
-        if (selectedHeader.equalsIgnoreCase("default") && metaColumnsMap.containsKey("NODENAME")) {
-            metaColumnsMap.remove("NODENAME");
-            metaColumnsMap.put("ENTITY_ID", "Node");
-            metaColumnsMap.put("ENTITY_NAME", "Node Name");
-        }
+        // String selectedHeader = extraParametersMap.get("selectedHeader");
+        // if (selectedHeader.equalsIgnoreCase("default") && metaColumnsMap.containsKey("NODENAME")) {
+        //     metaColumnsMap.remove("NODENAME");
+        //     metaColumnsMap.put("ENTITY_ID", "Node");
+        //     metaColumnsMap.put("ENTITY_NAME", "Node Name");
+        // }
         return metaColumnsMap;
     }
 

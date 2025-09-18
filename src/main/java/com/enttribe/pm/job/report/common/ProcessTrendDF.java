@@ -323,12 +323,14 @@ public class ProcessTrendDF extends Processor {
                         distinctDateTimeCount);
 
                 try {
-                    String currentMaxValuesStr = jobContext.sqlctx().sparkSession().conf().get(SPARK_SQL_PIVOT_MAX_VALUES);
+                    String currentMaxValuesStr = jobContext.sqlctx().sparkSession().conf()
+                            .get(SPARK_SQL_PIVOT_MAX_VALUES);
                     if (currentMaxValuesStr != null) {
                         int currentMaxValues = Integer.parseInt(currentMaxValuesStr);
                         if (distinctDateTimeCount > currentMaxValues) {
                             int newMaxValues = (int) Math.ceil(distinctDateTimeCount * 1.5);
-                            jobContext.sqlctx().sparkSession().conf().set(SPARK_SQL_PIVOT_MAX_VALUES, String.valueOf(newMaxValues));
+                            jobContext.sqlctx().sparkSession().conf().set(SPARK_SQL_PIVOT_MAX_VALUES,
+                                    String.valueOf(newMaxValues));
                             logger.info(
                                     "Automatically Increased {} To {} to Accommodate {} Distinct Values",
                                     SPARK_SQL_PIVOT_MAX_VALUES, newMaxValues, distinctDateTimeCount);
@@ -341,7 +343,8 @@ public class ProcessTrendDF extends Processor {
 
                             String newConfigValue = jobContext.sqlctx().sparkSession().conf()
                                     .get(SPARK_SQL_PIVOT_MAX_VALUES);
-                            logger.info("Verified New {} Configuration: {}", SPARK_SQL_PIVOT_MAX_VALUES, newConfigValue);
+                            logger.info("Verified New {} Configuration: {}", SPARK_SQL_PIVOT_MAX_VALUES,
+                                    newConfigValue);
                         }
                     } else {
                         logger.info("{} Configuration is NULL, Setting To Default Value", SPARK_SQL_PIVOT_MAX_VALUES);
@@ -638,27 +641,27 @@ public class ProcessTrendDF extends Processor {
             if ("L0".equals(aggregationLevel)) {
 
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, '-' AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS NEID, UPPER(nodename) AS NAM, kpijson FROM InputCQLData ORDER BY timestamp ASC");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, '-' AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else if ("L1".equals(aggregationLevel)) {
 
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, metajson['DT'] AS DT, metajson['HR'] AS HR, UPPER(metajson['DL1']) AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS NEID, UPPER(metajson['ENTITY_NAME']) AS NAM, kpijson FROM InputCQLData ORDER BY timestamp ASC");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, nodename AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else if ("L2".equals(aggregationLevel)) {
 
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, metajson['DT'] AS DT, metajson['HR'] AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, '-' AS DL3, '-' AS DL4, '-' AS NEID, UPPER(metajson['ENTITY_NAME']) AS NAM, kpijson FROM InputCQLData ORDER BY timestamp ASC");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(nodename) AS DL2, '-' AS DL3, '-' AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else if ("L3".equals(aggregationLevel)) {
 
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, metajson['DT'] AS DT, metajson['HR'] AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, UPPER(metajson['DL3']) AS DL3, '-' AS DL4, '-' AS NEID, UPPER(metajson['ENTITY_NAME']) AS NAM, kpijson FROM InputCQLData ORDER BY timestamp ASC");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, UPPER(nodename) AS DL3, '-' AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else if ("L4".equals(aggregationLevel)) {
 
                 inputDataset = jobContext.sqlctx().sql(
-                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, metajson['DT'] AS DT, metajson['HR'] AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, UPPER(metajson['DL3']) AS DL3, UPPER(metajson['DL4']) AS DL4, '-' AS NEID, UPPER(metajson['ENTITY_NAME']) AS NAM, kpijson FROM InputCQLData ORDER BY timestamp ASC");
+                        "SELECT 'INDIA' AS COUNTRY, UPPER(nodename) AS nodename, datalevel AS level, DATE_FORMAT(timestamp, 'dd-MM-yyyy') AS DT, DATE_FORMAT(timestamp, 'HHmm') AS HR, UPPER(metajson['DL1']) AS DL1, UPPER(metajson['DL2']) AS DL2, UPPER(metajson['DL3']) AS DL3, UPPER(nodename) AS DL4, '-' AS ENTITY_ID, nodename AS ENTITY_NAME, kpijson FROM InputCQLData");
 
             } else {
 
@@ -691,6 +694,13 @@ public class ProcessTrendDF extends Processor {
 
                                 "kpijson " +
                                 "FROM InputCQLData ORDER BY timestamp ASC");
+
+                                String selectedHeader = extraParametersMap.get("selectedHeader");
+                                if (selectedHeader.equalsIgnoreCase("default") && metaColumnsMap.containsKey("NODENAME")) {
+                                    metaColumnsMap.remove("NODENAME");
+                                    metaColumnsMap.put("ENTITY_ID", "Node");
+                                    metaColumnsMap.put("ENTITY_NAME", "Node Name");
+                                }
 
             }
             logger.info("Input Dataset Queried Successfully!");

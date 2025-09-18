@@ -220,7 +220,8 @@ public class AdvaPerformanceDataGenerator extends Processor {
     private String generateCsvFileForRouter(RouterInterfaceData router, TimeSlot timeSlot, String timestamp,
             List<String> counterNames)
             throws IOException {
-        String fileName = "ADVA_Performance_" + router.getRouterNeid() + "_" + timeSlot.getSlotId() + "_Main.csv";
+        String fileName = "ADVA_Performance_" + router.getRouterNeid() + "_" + timeSlot.getSlotId() + "_" + timestamp
+                + ".csv";
         Path filePath = Paths.get(System.getProperty("java.io.tmpdir"), fileName);
 
         try (BufferedWriter writer = Files.newBufferedWriter(filePath)) {
