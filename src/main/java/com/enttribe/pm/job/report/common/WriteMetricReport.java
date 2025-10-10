@@ -703,9 +703,11 @@ public class WriteMetricReport extends Processor {
                                                         if (ragStyle == null) {
                                                             ragStyle = workbook.createCellStyle();
                                                             ragStyle.cloneStyleFrom(dataStyle);
+                                                            logger.info("Applying RAG color: {}", hexColor);
                                                             XSSFColor fillColor = new XSSFColor(
                                                                     java.awt.Color.decode(hexColor),
                                                                     null);
+                                                            logger.info("Created XSSFColor: {}", fillColor);
                                                             ((XSSFCellStyle) ragStyle)
                                                                     .setFillForegroundColor(fillColor);
                                                             ragStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);

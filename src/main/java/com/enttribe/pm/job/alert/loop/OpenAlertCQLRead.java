@@ -2,9 +2,11 @@ package com.enttribe.pm.job.alert.loop;
 
 import com.enttribe.sparkrunner.processors.Processor;
 
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -116,7 +118,7 @@ public class OpenAlertCQLRead extends Processor {
         long minutes = durationMillis / 60000;
         long seconds = (durationMillis % 60000) / 1000;
 
-        cqlResultDataFrame.show();
+        // cqlResultDataFrame.show();
         logger.info("++++++[OpenAlertCQLRead={}] Execution Completed! Time Taken: {} Minutes | {} Seconds",
                 CURRENT_COUNT, minutes,
                 seconds);
@@ -958,15 +960,70 @@ public class OpenAlertCQLRead extends Processor {
 
         try {
 
-            String cqlFilter = String.format(
-                    "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s' AND date = '%s'%s AND timestamp = '%s'",
-                    domain,
-                    vendor,
-                    technology,
-                    datalevel,
-                    date,
-                    "L0".equals(aggregationLevel) ? " AND nodename = 'India'" : "",
-                    timestamp);
+            String ruleType = extraParameters.get("RULE_TYPE");
+            String cqlFilter = null;
+            if (ruleType.equalsIgnoreCase("TREND_RULE")) {
+
+                int bufferWindow = 1;
+                try {
+                    bufferWindow = Integer.parseInt(extraParameters.getOrDefault("BUFFER_WINDOW", "1"));
+                } catch (Exception e) {
+                }
+                String frequencyStr = extraParameters.getOrDefault("FREQUENCY", "15 MIN").toUpperCase();
+                int freqMinutes;
+
+                switch (frequencyStr) {
+                    case "5 MIN":
+                        freqMinutes = 5;
+                        break;
+                    case "15 MIN":
+                        freqMinutes = 15;
+                        break;
+                    case "PERHOUR":
+                        freqMinutes = 60;
+                        break;
+                    case "PERDAY":
+                        freqMinutes = 24 * 60;
+                        break;
+                    default:
+                        freqMinutes = 15;
+                        break;
+                }
+                logger.info("Frequency: {} Converted To {} Minutes", frequencyStr, freqMinutes);
+
+                logger.info(
+                        "Defined Rule Type is TREND_RULE, Building CQL Filter With Frequency = {} Buffer Window = {}, Timestamp = {}",
+                        frequencyStr, bufferWindow, timestamp);
+
+                DateTimeFormatter parser = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSXXXX");
+                DateTimeFormatter formatterStr = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSXXXX");
+                OffsetDateTime currentTs = OffsetDateTime.parse(timestamp, parser);
+                List<String> timestampFilters = new ArrayList<>();
+                for (int i = 0; i <= bufferWindow; i++) {
+                    OffsetDateTime ts = currentTs.minus(i * freqMinutes, ChronoUnit.MINUTES);
+                    timestampFilters.add(String.format("timestamp = '%s'", ts.format(formatterStr)));
+                }
+                String timestampCondition = String.join(" OR ", timestampFilters);
+                cqlFilter = String.format(
+                        "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s'%s AND (%s)",
+                        domain,
+                        vendor,
+                        technology,
+                        datalevel,
+                        "L0".equals(aggregationLevel) ? " AND nodename = 'India'" : "",
+                        timestampCondition);
+
+            } else {
+                cqlFilter = String.format(
+                        "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s' AND date = '%s'%s AND timestamp = '%s'",
+                        domain,
+                        vendor,
+                        technology,
+                        datalevel,
+                        date,
+                        "L0".equals(aggregationLevel) ? " AND nodename = 'India'" : "",
+                        timestamp);
+            }
 
             logger.info("CQL Filter: {}", cqlFilter);
 

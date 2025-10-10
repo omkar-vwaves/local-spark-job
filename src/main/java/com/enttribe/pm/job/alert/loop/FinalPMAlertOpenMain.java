@@ -173,7 +173,7 @@ public class FinalPMAlertOpenMain {
         private static JobContext setParametersToJobContext(JobContext jobContext) {
 
                 jobContext.setParameters("SPARK_PM_JDBC_URL",
-                                "jdbc:mysql://localhost:3306/PERFORMANCE_A_LAB?autoReconnect=true&allowPublicKeyRetrieval=true&useSSL=false");
+                                "jdbc:mysql://localhost:3306/PERFORMANCE?autoReconnect=true&allowPublicKeyRetrieval=true&useSSL=false");
                 jobContext.setParameters("SPARK_PM_JDBC_DRIVER", "org.mariadb.jdbc.Driver");
                 jobContext.setParameters("SPARK_PM_JDBC_USERNAME", "root");
                 jobContext.setParameters("SPARK_PM_JDBC_PASSWORD", "root");
@@ -214,8 +214,10 @@ public class FinalPMAlertOpenMain {
                 jobContext.setParameters("DOMAIN", "TRANSPORT");
                 jobContext.setParameters("VENDOR", "CISCO");
                 jobContext.setParameters("TECHNOLOGY", "COMMON");
-                jobContext.setParameters("FREQUENCY", "FIVEMIN");
-                jobContext.setParameters("TIMESTAMP", "2025-07-20 00:05:00.000000+0000");
+                jobContext.setParameters("FREQUENCY", "5 MIN");
+                jobContext.setParameters("TIMESTAMP", "2025-08-01 00:20:00.000000+0000");
+                jobContext.setParameters("KAFKA_TOPIC_NAME", "pm.alerts.fault");
+                jobContext.setParameters("SPARK_KAFKA_BROKER_ANSIBLE", "localhost:9092");
 
                 return jobContext;
 
@@ -242,7 +244,12 @@ public class FinalPMAlertOpenMain {
                                 .set("spark.hadoop.fs.s3a.path.style.access", "true")
                                 .set("spark.hadoop.fs.s3a.aws.credentials.provider",
                                                 "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
-                                .set("spark.sql.session.timeZone", "UTC");
+                                .set("spark.sql.session.timeZone", "UTC")
+
+                                .set("spark.driver.extraJavaOptions",
+                                                "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED")
+                                .set("spark.executor.extraJavaOptions",
+                                                "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED");
 
         }
 }

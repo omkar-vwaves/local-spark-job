@@ -480,7 +480,8 @@ public class ProcessTrendDF extends Processor {
                     logger.info("🔍 New Row Values: {}", Arrays.toString(newRowValues));
 
                     for (Map.Entry<String, String> entry : kpiMap.entrySet()) {
-                        String columnName = entry.getValue().toUpperCase();
+                        // String columnName = entry.getValue().toUpperCase();
+                        String columnName = entry.getValue();
 
                         int columnIndex = schema.fieldIndex(columnName);
                         String originalValue = row.getAs(columnName) != null ? row.getAs(columnName).toString() : "-";

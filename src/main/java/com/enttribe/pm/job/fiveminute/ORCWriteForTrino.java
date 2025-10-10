@@ -65,8 +65,10 @@ public class ORCWriteForTrino extends Processor {
             logger.info("Received Parameters - Domain: {}, Vendor: {}, Technology: {}, EmsType: {}, SequenceNo: {}",
                     domain, vendor, technology, emsType, sequenceno);
 
+            sequenceno = sequenceno == null ? 50 : sequenceno;
+
             StringBuilder mapQuery = new StringBuilder();
-            for (int i = 1; i <= 50; i++) {
+            for (int i = 1; i <= sequenceno; i++) {
                 mapQuery.append("rawcounters['").append(i).append("'] AS `C").append(i).append("`, ");
             }
 

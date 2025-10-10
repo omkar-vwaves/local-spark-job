@@ -10,7 +10,7 @@ import java.util.Map;
 
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
-import org.apache.spark.sql.api.java.UDF2;
+import org.apache.spark.sql.api.java.UDF3;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
@@ -25,7 +25,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import scala.jdk.CollectionConverters;
 
 public class NokiaParseAllCounter implements
-        UDF2<String, scala.collection.immutable.Map<String, scala.collection.immutable.Map<String, String>>, List<Row>>,
+        UDF3<String, scala.collection.immutable.Map<String, scala.collection.immutable.Map<String, String>>, String,List<Row>>,
         AbstractUDF {
 
     private static Logger logger = LoggerFactory.getLogger(NokiaParseAllCounter.class);
@@ -33,11 +33,6 @@ public class NokiaParseAllCounter implements
     private static final String ALL_CATEGORY_COUNTER_MAPJSON = "ALL_CATEGORY_COUNTER_MAPJSON";
     private static Map<String, List<Map<String, String>>> allCounterCategoryMap = null;
     private static final Object SYNCHRONIZER = new Object();
-
-    static long startTime;
-    static {
-        startTime = System.currentTimeMillis();
-    }
 
     public NokiaParseAllCounter(JobContext jobContext) {
         this.jobcontext = jobContext;
@@ -48,91 +43,113 @@ public class NokiaParseAllCounter implements
 
     @Override
     public List<Row> call(String processingTime,
-            scala.collection.immutable.Map<String, scala.collection.immutable.Map<String, String>> parsedCounterMap)
+            scala.collection.immutable.Map<String, scala.collection.immutable.Map<String, String>> parsedCounterMap,String dateTime)
             throws Exception {
         List<Row> fileContent = new ArrayList<>();
         getAllCategoryCounterMap();
         try {
             java.util.Map<String, scala.collection.immutable.Map<String, String>> rowDataFinalMap = CollectionConverters
                     .MapHasAsJava(parsedCounterMap).asJava();
-            parseAll(fileContent, rowDataFinalMap, processingTime);
+            parseAll(fileContent, rowDataFinalMap, processingTime, jobcontext,dateTime);
         } catch (Exception e) {
-            logger.error("Exception Occurred In Call Method: {}", e.getMessage(), e);
+            logger.error("Exception Occurred While Parsing All Counters In Call Method, Message: {}", e.getMessage(),
+                    e);
         }
         return fileContent;
     }
 
     private void parseAll(List<Row> fileContent,
-            Map<String, scala.collection.immutable.Map<String, String>> rowDataFinalMap, String processingTime) {
+            Map<String, scala.collection.immutable.Map<String, String>> rowDataFinalMap, String processingTime,
+            JobContext jobcontext,String dateTime) {
         try {
             for (String key : rowDataFinalMap.keySet()) {
                 java.util.Map<String, String> counterValueMap = CollectionConverters
                         .MapHasAsJava(rowDataFinalMap.get(key)).asJava();
                 String[] categoryKeyArray = key.split("##");
                 String category = categoryKeyArray[0];
-                String measObjLdn = categoryKeyArray[1];
-                String dateTime = categoryKeyArray[2];
-                String pmemsId = measObjLdn;
-                parseAllCounter(fileContent, dateTime, category, pmemsId, processingTime, counterValueMap, measObjLdn);
+                String pmemsId = categoryKeyArray[1];
+                // String dateTime = categoryKeyArray[2];
+                // String dateTime = dateTime;
+ 
+                parseAllCounter(fileContent, dateTime, category, pmemsId, processingTime, counterValueMap, jobcontext);
             }
         } catch (Exception e) {
-            logger.error("Exception Occured In ParseAll Method: {}", e.getMessage(), e);
+            logger.error("Exception Occured While Parsing All In ParseAll Method, Message: {}", e.getMessage(), e);
         }
     }
 
     private void parseAllCounter(List<Row> fileContent, String dateTime, String category, String pmemsId,
-            String processingTime, Map<String, String> counterValueMap1, String measObjLdn) {
+            String processingTime, Map<String, String> counterValueMap1, JobContext jobcontext) {
         try {
             String date = substring(dateTime, 2, 8);
             String time = substring(dateTime, 8, 12);
             String dateKey = substring(dateTime, 0, 8);
             String hourkey = substring(dateTime, 0, 10);
             String quarterKey = substring(dateTime, 0, 12);
+            String fiveminutekey = quarterKey;
+            String frequency = jobcontext.getParameter("frequency");
+            frequency = frequency != null ? frequency : jobcontext.getParameter("FREQUENCY");
+            if (frequency != null && !frequency.isEmpty()) {
+                frequency = frequency.toUpperCase();
+                switch (frequency) {
+                    case "15 MIN":
+                        frequency = "QUARTERLY";
+                        break;
+                    case "QUARTERLY":
+                        frequency = "QUARTERLY";
+                        break;
+                    case "PER HOUR":
+                        frequency = "HOURLY";
+                        break;
+                    case "HOURLY":
+                        frequency = "HOURLY";
+                        break;
+                    default:
+                        frequency = "QUARTERLY";
+                        break;
+                }
+            } else {
+                frequency = "QUARTERLY";
+            }
+ 
+            logger.debug("Frequency: {}", frequency);
+ 
             String extractedPmemsid = pmemsId != null && pmemsId.contains("_") ? pmemsId.split("_")[0] : pmemsId;
-            String finalKey = extractedPmemsid + "##" + date + time;
+            String finalKey = pmemsId + "##" + date + time;
             if (allCounterCategoryMap.containsKey(category)) {
-                Map<String, Map<String, String>> counterValueMap = getValueMapAllCounters(category, counterValueMap1,
-                        measObjLdn);
+                Map<String, Map<String, String>> counterValueMap = getValueMapAllCounters(category, counterValueMap1);
                 for (Map.Entry<String, Map<String, String>> entry : counterValueMap.entrySet()) {
                     fileContent.add(RowFactory.create(finalKey, date, time, dateKey, hourkey, quarterKey,
-                            processingTime, extractedPmemsid, entry.getKey(), entry.getValue(), measObjLdn));
+                            processingTime, extractedPmemsid, entry.getKey(), entry.getValue(), pmemsId, fiveminutekey,
+                            frequency));
                 }
             }
         } catch (Exception e) {
-            logger.error(
-                    "Exception Occurred While Parsing Counters With Input Parameters: CATEGORY: {}, PMEMSID: {}, Error: {}",
-                    category, pmemsId, e.getMessage(), e);
+            logger.error("Exception Occurred While Parsing Counters In ParseAllCounter Method, Message: {}",
+                    e.getMessage(), e);
         }
     }
 
     private Map<String, Map<String, String>> getValueMapAllCounters(String category,
-            Map<String, String> counterValueMap1, String measObjLdn) {
-        logger.debug("NokiaParseAllCounter: getValueMapAllCounters - category: {}, measObjLdn: {}", category,
-                measObjLdn);
+            Map<String, String> counterValueMap1) {
         Map<String, Map<String, String>> categoryVsCounterValueMap = new HashMap<>();
+ 
         List<Map<String, String>> derivedColumnList = allCounterCategoryMap.get(category);
         if (derivedColumnList != null) {
             for (Map<String, String> wrapper : derivedColumnList) {
                 String counterheaderName = wrapper.get("CounterName");
                 String sequenceNo = wrapper.get("sequenceno");
                 String categoryAliasName = wrapper.get("Category");
-                logger.debug("NokiaParseAllCounter: Processing Counter: {} for Category: {}", counterheaderName,
-                        categoryAliasName);
                 Map<String, String> tempMap = categoryVsCounterValueMap.getOrDefault(categoryAliasName,
                         new HashMap<>());
                 String value = counterValueMap1.get(counterheaderName);
                 if (value != null) {
-                    logger.debug("NokiaParseAllCounter: Found Counter Value: {} For Counter: {}", value,
-                            counterheaderName);
                     String column = createCustomizedColumns(value, wrapper);
                     tempMap.put(sequenceNo, column);
                 }
                 categoryVsCounterValueMap.put(categoryAliasName, tempMap);
             }
         }
-        logger.debug("NokiaParseAllCounter: getValueMapAllCounters - Processed Category: {}, Result Size: {}",
-                category,
-                categoryVsCounterValueMap.size());
         return categoryVsCounterValueMap;
     }
 
@@ -144,32 +161,28 @@ public class NokiaParseAllCounter implements
     }
 
     private void getAllCategoryCounterMap() {
+ 
         if (allCounterCategoryMap == null) {
             synchronized (SYNCHRONIZER) {
                 if (allCounterCategoryMap == null) {
                     String json = jobcontext.getParameter(ALL_CATEGORY_COUNTER_MAPJSON);
                     if (json == null || json.isEmpty()) {
-                        logger.debug(
-                                "NokiaParseAllCounter: ALL_CATEGORY_COUNTER_MAPJSON is EMPTY/NULL In Job Context, Skipping Process!");
+                        logger.info("ALL_CATEGORY_COUNTER_MAPJSON is EMPTY/NULL In Job Context, Skipping Process!");
                         return;
                     }
                     try {
                         allCounterCategoryMap = new ObjectMapper().readValue(json,
                                 new TypeReference<Map<String, List<Map<String, String>>>>() {
                                 });
-                        logger.info("NokiaParseAllCounter: Successfully Parsed ALL_CATEGORY_COUNTER_MAP Size: {}",
+                        logger.info("Successfully Parsed ALL_CATEGORY_COUNTER_MAP Size: {}",
                                 allCounterCategoryMap != null ? allCounterCategoryMap.size() : 0);
                     } catch (Exception e) {
-                        logger.error(
-                                "NokiaParseAllCounter: Exception Occurred While Parsing JSON in ALL_CATEGORY_COUNTER_MAP , Error : {}",
+                        logger.error("Exception Occurred While Parsing JSON in ALL_CATEGORY_COUNTER_MAP , Error : {}",
                                 e.getMessage(), e);
                     }
                 }
             }
-        } else {
-            logger.debug("NokiaParseAllCounter: ALL_CATEGORY_COUNTER_MAP is Already Initialized.");
         }
-        logger.debug("NokiaParseAllCounter: Loaded ALL_CATEGORY_COUNTER_MAP Successfully..!");
     }
 
     @Override
@@ -191,7 +204,10 @@ public class NokiaParseAllCounter implements
         fields.add(DataTypes.createStructField("categoryName", DataTypes.StringType, true));
         fields.add(DataTypes.createStructField("rawcounters",
                 DataTypes.createMapType(DataTypes.StringType, DataTypes.StringType, true), true));
-        fields.add(DataTypes.createStructField("cmdistname", DataTypes.StringType, true));
+        fields.add(DataTypes.createStructField("interface_name", DataTypes.StringType, true));
+        fields.add(DataTypes.createStructField("fiveminutekey", DataTypes.StringType, true));
+        fields.add(DataTypes.createStructField("frequency", DataTypes.StringType, true));
         return DataTypes.createArrayType(DataTypes.createStructType(fields));
     }
+ 
 }

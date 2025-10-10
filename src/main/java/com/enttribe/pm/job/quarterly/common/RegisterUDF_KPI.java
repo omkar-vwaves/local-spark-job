@@ -137,7 +137,7 @@ public class RegisterUDF_KPI extends Processor {
                 .asNondeterministic();
         jobContext.sqlctx().udf().register("CreateMetaData", metaDataCreatorUdf);
 
-        logger.info("============= ** UDFs Registered Successfully! ** =============");
+        logger.info("============= ** Updated UDFs Registered Successfully! ** =============");
         return this.dataFrame;
     }
     // ===================== KPIEvaluatorBntv Started ===================== //
@@ -240,7 +240,7 @@ public class RegisterUDF_KPI extends Processor {
                 }
             }
             int computedKpi = kpiMap.size();
-            logger.error("Initial Computed KPI Count: {}", computedKpi);
+            logger.debug("Initial Computed KPI Count: {}", computedKpi);
 
             int updatedComputedKpi = 0;
             while (computedKpi != updatedComputedKpi) {
@@ -250,7 +250,7 @@ public class RegisterUDF_KPI extends Processor {
                 updatedComputedKpi = kpiMap.size();
             }
 
-            logger.error("Final Computed KPI Count: {}", kpiMap.size());
+            logger.debug("Final Computed KPI Count: {}", kpiMap.size());
 
             kpiMap = evaluateFunction(NvlKpiMap, kpiMap, metaJsonMap, null);
 
@@ -281,7 +281,6 @@ public class RegisterUDF_KPI extends Processor {
                         }
                     }
                 }
-
 
                 String dataLevel = generateDataLevel(level, technology, networkType);
 
@@ -315,7 +314,6 @@ public class RegisterUDF_KPI extends Processor {
 
                             if (metaJsonMap != null) {
 
-
                                 metaJsonMap.put("PARENT_ENTITY_ID", metaJsonMap.get("ENTITY_ID"));
                                 metaJsonMap.put("PARENT_ENTITY_NAME", metaJsonMap.get("ENTITY_NAME"));
                                 metaJsonMap.put("PARENT_ENTITY_TYPE", metaJsonMap.get("ENTITY_TYPE"));
@@ -328,19 +326,19 @@ public class RegisterUDF_KPI extends Processor {
 
                                 // String childNeId = metaJsonMap.get("NEID");
                                 // if (childNeId != null && !childNeId.isEmpty()) {
-                                //     String parentNeId = childNeId.split("_")[0];
-                                //     metaJsonMap.put("PARENT_ENTITY_ID", parentNeId);
+                                // String parentNeId = childNeId.split("_")[0];
+                                // metaJsonMap.put("PARENT_ENTITY_ID", parentNeId);
                                 // }
 
                                 // String parentNeName = metaJsonMap.get("NAM");
                                 // if (parentNeName != null && !parentNeName.isEmpty()) {
-                                //     parentNeName = parentNeName.split("_")[0];
-                                //     metaJsonMap.put("PARENT_ENTITY_NAME", parentNeName);
+                                // parentNeName = parentNeName.split("_")[0];
+                                // metaJsonMap.put("PARENT_ENTITY_NAME", parentNeName);
                                 // }
 
                                 // String parentNeType = metaJsonMap.get("NODE_TYPE");
                                 // if (parentNeType != null) {
-                                //     metaJsonMap.put("PARENT_ENTITY_TYPE", parentNeType);
+                                // metaJsonMap.put("PARENT_ENTITY_TYPE", parentNeType);
                                 // }
 
                                 // metaJsonMap.put("ENTITY_TYPE", metaJsonMap.get("NODE_TYPE"));
@@ -367,10 +365,14 @@ public class RegisterUDF_KPI extends Processor {
                     metaJsonMap = new THashMap<>();
                 }
 
-                
-
-                if (domain != null && vendor != null && technology != null && dataLevel != null && date != null
-                        && nodeName != null && ctime != null && networkType != null) {
+                if (isValid(domain) &&
+                        isValid(vendor) &&
+                        isValid(technology) &&
+                        isValid(dataLevel) &&
+                        isValid(date) &&
+                        isValid(nodeName) &&
+                        isValid(ctime) &&
+                        isValid(networkType)) {
 
                     row = (Row) RowFactory.create(
                             new Object[] { domain, vendor, technology, dataLevel, date, nodeName, ctime, kpiMap,
@@ -379,15 +381,26 @@ public class RegisterUDF_KPI extends Processor {
                 }
 
             } else {
-                logger.error(
+                logger.debug(
                         "Invalid Input KPIEvaluatorBntv: domain={} vendor={} technology={} level={} date={} nodeName={} ctime={} networkType={}",
                         domain, vendor, technology, level, date, nodeName, ctime, networkType);
             }
 
-            logger.error("Generated Row: {}", row);
+            logger.debug("Generated Row: {}", row);
 
             return row;
 
+        }
+
+        private boolean isValid(Object val) {
+            if (val == null)
+                return false;
+            if (val instanceof String) {
+                String str = ((String) val).trim();
+                return !str.isEmpty() &&
+                        !str.equalsIgnoreCase("null");
+            }
+            return true; // Non-string, non-null is valid
         }
 
         // private String createNVLExpression(String formulaString, String counterKey) {
@@ -762,7 +775,7 @@ public class RegisterUDF_KPI extends Processor {
                     }
                 }
             }
-            logger.error("KPI Formula Map Size: {}", kpiFormulaFinalMap.size());
+            logger.debug("KPI Formula Map Size: {}", kpiFormulaFinalMap.size());
         }
 
         @Override
@@ -849,7 +862,7 @@ public class RegisterUDF_KPI extends Processor {
             List<Row> rowList = new ArrayList<>();
             try {
 
-                logger.error("[DEBUG] Aggregation Level: {}, Meta Info={}", aggregationLevel, metaMap);
+                logger.debug("[DEBUG] Aggregation Level: {}, Meta Info={}", aggregationLevel, metaMap);
 
                 boolean bandAggr = false;
                 boolean nestatusAggr = false;
@@ -865,7 +878,7 @@ public class RegisterUDF_KPI extends Processor {
                     }
                 }
 
-                logger.error(
+                logger.debug(
                         "Aggregation Level: {}, SubAggregation: {}, BandAggr: {}, NestatusAggr: {}, SubAggrEnable: {}",
                         aggregationLevel, subAggregation, bandAggr, nestatusAggr, subAggrEnable);
 
@@ -910,9 +923,10 @@ public class RegisterUDF_KPI extends Processor {
                             metaMapENB.put("NEID", enbNeid);
                         }
 
-                        if (metaMapENB.containsKey("parquetLevel")) {
-                            metaMapENB.put("parquetLevel", metaMapENB.get("NODE_TYPE"));
-                        }
+                        // if (metaMapENB.containsKey("parquetLevel")) {
+                        // metaMapENB.put("parquetLevel", metaMapENB.get("NODE_TYPE"));
+                        // }
+                        metaMapENB.put("parquetLevel", metaMapENB.get("NODE_TYPE"));
 
                         // =========================== Executed ===========================
 
@@ -954,8 +968,9 @@ public class RegisterUDF_KPI extends Processor {
                         // metaMapH1.put("displaynodename", metaMapH1.get("H1"));
                         // metaMapH1.put("parquetLevel", "H1");
 
-                        // convertRowKey("H1_NEID", metaMapH1, time, rowList, subAggregation, subAggrEnable,
-                        //         Symbol.EMPTY_STRING, true, bandAggr, nestatusAggr, false);
+                        // convertRowKey("H1_NEID", metaMapH1, time, rowList, subAggregation,
+                        // subAggrEnable,
+                        // Symbol.EMPTY_STRING, true, bandAggr, nestatusAggr, false);
                         break;
                     /********************************************************************************************************/
 
@@ -996,16 +1011,16 @@ public class RegisterUDF_KPI extends Processor {
                         break;
                     /********************************************************************************************************/
                     case "H1/H2": {
-                        logger.error("inside H1/H2 : {}", metaMap);
+                        logger.debug("inside H1/H2 : {}", metaMap);
                         Map<String, String> metaMap_H2 = updateMetaInfoMap(new HashMap<>(metaMap),
                                 "CEL#NEID#NET#ENB#ENB_NEID#NEL");
                         Map<String, String> metaMap_H1 = updateMetaInfoMap(new HashMap<>(metaMap_H2), "H2#H2_NEID");
-                        logger.error("metaMap_H1 H1 : {}", metaMap_H1.toString());
-                        logger.error("metaMap_H2 H2 : {}", metaMap_H2.toString());
+                        logger.debug("metaMap_H1 H1 : {}", metaMap_H1.toString());
+                        logger.debug("metaMap_H2 H2 : {}", metaMap_H2.toString());
 
                         if (metaMap_H2.containsKey("H2")) {
                             String rowKeyAppender = getRowKeyAppender(metaMap_H2, "RowKeyAppender");
-                            logger.error("H2 rowKeyAppender: {}", rowKeyAppender);
+                            logger.debug("H2 rowKeyAppender: {}", rowKeyAppender);
 
                             metaMap_H2.put("NAM", metaMap_H2.get("H2"));
                             metaMap_H2.put("DNAM", metaMap_H2.get("H2"));
@@ -1021,7 +1036,7 @@ public class RegisterUDF_KPI extends Processor {
                             }
 
                             String rowKeyAppender = getRowKeyAppender(metaMap_H1, "RowKeyAppender");
-                            logger.error("H1 rowKeyAppender : {}", rowKeyAppender);
+                            logger.debug("H1 rowKeyAppender : {}", rowKeyAppender);
 
                             metaMap_H1.put("NAM", metaMap_H1.get("H1"));
                             metaMap_H1.put("DNAM", metaMap_H1.get("H1"));
@@ -1031,7 +1046,7 @@ public class RegisterUDF_KPI extends Processor {
                                     rowKeyAppender,
                                     true, bandAggr, nestatusAggr, false);
                         } else {
-                            logger.error("metamap H1 and H2 Both Does Not Contains Key H1 and H2");
+                            logger.debug("metamap H1 and H2 Both Does Not Contains Key H1 and H2");
                         }
                     }
                         break;
@@ -1153,7 +1168,7 @@ public class RegisterUDF_KPI extends Processor {
                 String subAggregation, boolean subAggrEnable, String rowKeyAppender, boolean isAllEnabledInSiteStatus,
                 boolean bandAggr, boolean nestatusAggr, boolean architectLevel) {
 
-            logger.error(
+            logger.debug(
                     "Converting RowKey For AggrLevel: {}, MetaMap: {}, Time: {}, RowList: {}, SubAggregation: {}, SubAggrEnable: {}, RowKeyAppender: {}, IsAllEnabledInSiteStatus: {}, BandAggr: {}, NestatusAggr: {}, ArchitectLevel: {}",
                     aggregationLevel, metaMap, time, rowList, subAggregation, subAggrEnable, rowKeyAppender,
                     isAllEnabledInSiteStatus, bandAggr, nestatusAggr, architectLevel);
@@ -1265,7 +1280,7 @@ public class RegisterUDF_KPI extends Processor {
                     }
                 }
             }
-            logger.error("NeVsL3Map Size: {}", neVsL3Map.size());
+            logger.debug("NeVsL3Map Size: {}", neVsL3Map.size());
         }
 
         private <K, V> Map<K, V> strToMap(String stringToConvert) {
@@ -1287,17 +1302,19 @@ public class RegisterUDF_KPI extends Processor {
             String vendor = contextMap.get("VENDOR");
             String technology = contextMap.get("TECHNOLOGY");
             String networktype = contextMap.get(NETWORK_TYPE);
-            networktype = contextMap.get("NETWORK_TYPE");
+            networktype = (networktype == null || networktype.isEmpty()) ? contextMap.get("NETWORK_TYPE") : networktype;
+
+            logger.debug("Input NetworkType: {}", networktype);
 
             String level = metaJsonMap.containsKey("parquetLevel")
                     && metaJsonMap.get("parquetLevel") != null ? metaJsonMap.get("parquetLevel")
                             : null;
 
-            logger.error("Input ArchitectLevel: {} And Received Level: {}", architectLevel, level);
+            logger.debug("Input ArchitectLevel: {} And Received Level: {}", architectLevel, level);
 
             if (level != null && !level.equals(NODE)) {
 
-                logger.error("Recieved Level Is Not Null And Level Not Equal To Node Level: {}, Node: {}", level, NODE);
+                logger.debug("Recieved Level Is Not Null And Level Not Equal To Node Level: {}, Node: {}", level, NODE);
 
                 level = level + (metaJsonMap.containsKey(ROW_KEY_APPENDER)
                         && StringUtils.isNotEmpty(metaJsonMap.get(ROW_KEY_APPENDER))
@@ -1315,12 +1332,15 @@ public class RegisterUDF_KPI extends Processor {
                                         ? Symbol.UNDERSCORE_STRING + metaJsonMap.get(SAV)
                                         : Symbol.EMPTY_STRING);
             } else {
-                logger.error("Recieved Level Is Null, So Keeping The Level As It Is: {}", level);
+                logger.debug("Recieved Level Is Null, So Keeping The Level As It Is: {}", level);
             }
 
-            logger.error(
+            logger.debug(
                     "Returning Row With NodeName: {}, Technology: {}, Domain: {}, Vendor: {}, Networktype: {}, Level: {}, Time: {}, MetaJsonMap: {}",
                     nodeName, technology, domain, vendor, networktype, level, time, metaJsonMap);
+            if (level == null) {
+
+            }
 
             return RowFactory.create(nodeName, technology, domain, vendor, networktype, level, time,
                     metaJsonMap);
@@ -1495,7 +1515,7 @@ public class RegisterUDF_KPI extends Processor {
                     break;
             }
 
-            logger.info("Generated meta data: {} for time: {}", metaJsonMap, instance.getTimeInMillis());
+            logger.debug("Generated meta data: {} for time: {}", metaJsonMap, instance.getTimeInMillis());
 
             return RowFactory.create(instance.getTimeInMillis(), metaJsonMap);
         }
@@ -1516,7 +1536,7 @@ public class RegisterUDF_KPI extends Processor {
         public List<Row> call(String neTypeRecieved, String finalKey, String geoDetailsRecieved, String jobType,
                 String processingTime) throws Exception {
 
-            logger.error("neTypeRecieved: {}, finalKey: {}, geoDetailsRecieved: {},jobType: {}", neTypeRecieved,
+            logger.debug("neTypeRecieved: {}, finalKey: {}, geoDetailsRecieved: {},jobType: {}", neTypeRecieved,
                     finalKey, geoDetailsRecieved, jobType);
 
             initializeNeTypeRowKeyAppenderMap();
@@ -1536,13 +1556,14 @@ public class RegisterUDF_KPI extends Processor {
             String vendor = contextMap.get("VENDOR");
             String technology = contextMap.get("TECHNOLOGY");
             String networktype = contextMap.get(NETWORK_TYPE);
-            networktype = contextMap.get("NETWORK_TYPE");
+            networktype = (networktype == null || networktype.isEmpty()) ? contextMap.get("NETWORK_TYPE") : networktype;
+            logger.debug("Input NetworkType: {}", networktype);
 
             // String networktype = StringUtils.isNotEmpty(metaInfo.get("NODE_TYPE")) ?
             // metaInfo.get("NODE_TYPE")
             // : (StringUtils.isNotEmpty(metaInfo.get("NET")) ? metaInfo.get("NET")
             // : Symbol.EMPTY_STRING);
-            logger.error("Network type ----> {}", networktype);
+            logger.debug("Network type ----> {}", networktype);
             String nodename = Symbol.EMPTY_STRING;
             String level = StringUtils.isNotEmpty(metaInfo.get("NET")) ? metaInfo.get("NET")
                     : Symbol.EMPTY_STRING;
@@ -1559,16 +1580,17 @@ public class RegisterUDF_KPI extends Processor {
                         + timeKey;
 
                 ctime = getTimeStampFromRowKey(timeKey, jobType);
-                // metaInfo.put("emstype", contextMap.get("emsType"));
-                metaInfo.put("emstype", contextMap.get("EMS_TYPE"));
-
+                String emsType = contextMap.get("emsType");
+                emsType = (emsType == null || emsType.isEmpty()) ? contextMap.get("EMS_TYPE") : emsType;
+                logger.debug("Input EmsType: {}", emsType);
+                metaInfo.put("emstype", emsType);
                 // metaInfo.put("datalevel", "NETWORKELEMENT");
                 metaInfo.put("T", technology);
 
                 metaInfo = setOtherDetails(jobType, timeKey, processingTime, metaInfo);
                 metaInfo = setTimeDetails(jobType, timeKey, metaInfo);
 
-                logger.error("Generated MetaInfo: {}", metaInfo.toString());
+                logger.debug("Generated MetaInfo: {}", metaInfo.toString());
 
                 Row row = RowFactory.create(
                         new Object[] { rowKey, nodename, technology, domain, vendor, networktype, level, ctime,
@@ -1578,7 +1600,7 @@ public class RegisterUDF_KPI extends Processor {
                 }
             } else {
 
-                logger.error("Recieved FinalKey is NULL, So Creating Row With Default Values");
+                logger.debug("Recieved FinalKey is NULL, So Creating Row With Default Values");
 
                 Row row = RowFactory.create(
                         new Object[] { rowKey, nodename, technology, domain, vendor, networktype, level, ctime,
@@ -1600,8 +1622,8 @@ public class RegisterUDF_KPI extends Processor {
                     }
                 }
             }
-            logger.error("Netype RowKey Appender Map : {}", netypeRowKeyAppenderMap.toString());
-            logger.error("Netype RowKey Appender Map Size: {}",
+            logger.debug("Netype RowKey Appender Map : {}", netypeRowKeyAppenderMap.toString());
+            logger.debug("Netype RowKey Appender Map Size: {}",
                     netypeRowKeyAppenderMap != null ? netypeRowKeyAppenderMap.size() : 0);
         }
 
@@ -1641,20 +1663,45 @@ public class RegisterUDF_KPI extends Processor {
         // }
         // }
 
+        // public long getTimeStampFromRowKey(String rowKey, String frequency) {
+        // try {
+        // if (QUARTERLY.equals(frequency) || HOURLY_STRING.equals(frequency)) {
+        // return DateUtils.parse(QUARTERLY_DATE_FORMATE, rowKey).getTime();
+        // }
+        // } catch (Exception e) {
+        // logger.error("Error Parsing Timestamp From RowKey: {}, Frequency: {},
+        // Message: {}", rowKey, frequency,
+        // e.getMessage());
+        // }
+        // return getCurrentTimestamp();
+        // }
+
         public long getTimeStampFromRowKey(String rowKey, String frequency) {
             try {
                 if (QUARTERLY.equals(frequency) || HOURLY_STRING.equals(frequency)) {
-                    return DateUtils.parse(QUARTERLY_DATE_FORMATE, rowKey).getTime();
+                    // Try full format first
+                    try {
+                        return DateUtils.parse("yyMMddHHmmss", rowKey).getTime();
+                    } catch (Exception e1) {
+                        // Fallback: try short format (append "00")
+                        rowKey = rowKey + "00";
+                        try {
+                            return DateUtils.parse("yyMMddHHmmss", rowKey).getTime();
+                        } catch (Exception e2) {
+                            logger.warn("RowKey [{}] does not match expected formats (yyMMddHHmmss or yyMMddHHmm).",
+                                    rowKey);
+                        }
+                    }
                 }
             } catch (Exception e) {
-                logger.error("Error Parsing Timestamp From RowKey: {}, Frequency: {}, Message: {}", rowKey, frequency,
-                        e.getMessage());
+                logger.error("Error Parsing Timestamp From RowKey: {}, Frequency: {}, Message: {}",
+                        rowKey, frequency, e.getMessage());
             }
-            return getCurrentTimestamp();
+            return getCurrentTimestamp(); // fallback
         }
 
         private long getCurrentTimestamp() {
-            return new Date().getTime();
+            return System.currentTimeMillis();
         }
 
         // private Map<String, String> setTimeDetails(String jobType, String timeKey,
@@ -1697,7 +1744,7 @@ public class RegisterUDF_KPI extends Processor {
             final SimpleDateFormat outputFormat = new SimpleDateFormat("dd-MM-yyyy");
 
             try {
-                logger.error("Setting Time Details in MetaInfo for JobType: {}, TimeKey: {}", jobType, timeKey);
+                logger.debug("Setting Time Details in MetaInfo for JobType: {}, TimeKey: {}", jobType, timeKey);
 
                 Date date = inputFormat.parse(timeKey);
                 metaInfo.put("DT", outputFormat.format(date));

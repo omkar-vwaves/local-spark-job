@@ -32,12 +32,12 @@ public class GetCounterAndKPIDetails extends Processor {
 
 	public GetCounterAndKPIDetails() {
 		super();
-		logger.info("Initialized GetCounterAndKPIDetails with Default Constructor");
+		logger.debug("Initialized GetCounterAndKPIDetails with Default Constructor");
 	}
 
 	public GetCounterAndKPIDetails(Integer id, String processorName) {
 		super(id, processorName);
-		logger.info("Initialized GetCounterAndKPIDetails with ID: {}, ProcessorName: {}", id, processorName);
+		logger.debug("Initialized GetCounterAndKPIDetails with ID: {}, ProcessorName: {}", id, processorName);
 	}
 
 	static long startTime;
@@ -48,7 +48,7 @@ public class GetCounterAndKPIDetails extends Processor {
 	@Override
 	public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) throws Exception {
 
-		logger.info("GetCounterAndKPIDetails Execution Started :: ");
+		logger.debug("GetCounterAndKPIDetails Execution Started :: ");
 
 		try {
 			Map<String, String> contextMap = jobContext.getParameters();
@@ -57,7 +57,7 @@ public class GetCounterAndKPIDetails extends Processor {
 			jdbcUsername = contextMap.get("SPARK_PM_JDBC_USERNAME");
 			jdbcPassword = contextMap.get("SPARK_PM_JDBC_PASSWORD");
 
-			logger.info("JDBC Connection Details: Driver={}, URL={}, Username={}, Password={}",
+			logger.debug("JDBC Connection Details: Driver={}, URL={}, Username={}, Password={}",
 					jdbcDriver, jdbcUrl, jdbcUsername, jdbcPassword);
 
 			Map<String, String> counterAggrMap = getCounterAggrMap(jobContext, contextMap);
@@ -77,16 +77,18 @@ public class GetCounterAndKPIDetails extends Processor {
 
 			String kpis = kpiDataValue + "," + metaDataValue;
 
-			logger.info("Generated ALL_KPI : {}", kpis);
+			logger.debug("Generated ALL_KPI : {}", kpis);
 			jobContext.setParameters("ALL_KPI", kpis);
+		    jobContext.setParameters("SEQUENCE_TO_COUNTER_QUERY", getCategorySequenceForCounterVariable(jobContext, contextMap));
+
 
 			if (this.dataFrame != null) {
 				long count = this.dataFrame.count();
-				logger.info("GetCounterAndKPIDetails - Result Row Count Size : {}", count);
+				logger.debug("GetCounterAndKPIDetails - Result Row Count Size : {}", count);
 			}
 
 			long endTime = System.currentTimeMillis();
-			logger.info("GetCounterAndKPIDetails Execution Completed : {} Milliseconds", endTime - startTime);
+			logger.debug("GetCounterAndKPIDetails Execution Completed : {} Milliseconds", endTime - startTime);
 
 		} catch (Exception e) {
 			logger.error("Exception Occurred During GetCounterAndKPIDetails Execution: {}", e.getMessage(),
@@ -96,7 +98,6 @@ public class GetCounterAndKPIDetails extends Processor {
 		return this.dataFrame;
 	}
 
-	
 	private Map<String, String> getCounterAggrMap(JobContext jobcontext, Map<String, String> contextMap) {
 
 		Map<String, String> counterMap = new THashMap<>();
@@ -138,7 +139,7 @@ public class GetCounterAndKPIDetails extends Processor {
 			}
 
 			String sqlQuery = sqlBuilder.toString();
-			logger.info("COUNTER_AGGREGATION_MAPJSON Query : {}", sqlQuery);
+			logger.debug("COUNTER_AGGREGATION_MAPJSON Query : {}", sqlQuery);
 
 			ResultSet rs = getResultFromPMDatabase(sqlQuery, contextMap);
 			if (rs != null) {
@@ -147,7 +148,7 @@ public class GetCounterAndKPIDetails extends Processor {
 				}
 			}
 
-			logger.info("COUNTER_AGGREGATION_MAPJSON Size : {}", counterMap.size());
+			logger.debug("COUNTER_AGGREGATION_MAPJSON Size : {}", counterMap.size());
 
 			String counterMapJson = mapper.writeValueAsString(counterMap);
 			jobcontext.setParameters("COUNTER_AGGREGATION_MAPJSON", counterMapJson);
@@ -158,6 +159,116 @@ public class GetCounterAndKPIDetails extends Processor {
 
 		return counterMap;
 	}
+
+	private String getCategorySequenceForCounterVariable(JobContext jobContext, Map<String, String> contextMap) {
+        logger.info("Starting to Get Category Sequence For Counter Variable :: ");
+
+        StringBuilder counterVariableQuery = new StringBuilder("SELECT ");
+		StringBuilder counterVariableQueryType = new StringBuilder("");
+		StringBuilder orcPaths = new StringBuilder("");
+        try {
+            String vendor = contextMap.get("VENDOR").trim();
+            String domain = contextMap.get("DOMAIN").trim();
+            String technology = contextMap.get("TECHNOLOGY").trim();
+            String nodes = contextMap.get("nodes");
+            if(technology == null) {
+				logger.info("Technology is null:");
+				technology = "COMMON";
+			}
+            StringBuilder sqlBuilder = new StringBuilder();
+            sqlBuilder.append("SELECT ")
+                    .append("pcv.PM_COUNTER_VARIABLE_ID_PK, ")
+                    .append("kc.SEQUENCE_NO, ")
+                    .append("pc.CATEGORY_NAME ")
+                    .append("FROM PM_COUNTER_VARIABLE pcv ")
+                    .append("JOIN KPI_COUNTER kc ON pcv.KPI_COUNTER_ID_FK = kc.KPI_COUNTER_ID_PK ")
+                    .append("JOIN PM_CATEGORY pc ON pcv.PM_CATEGORY_ID_FK = pc.PM_CATEGORY_ID_PK ")
+                    .append("JOIN PM_NODE_VENDOR pnv ON pc.PM_NODE_VENDOR_ID_FK = pnv.PM_NODE_VENDOR_ID_PK ")
+                    .append("WHERE pnv.DOMAIN = '").append(domain).append("' ")
+                    .append("AND pnv.VENDOR = '").append(vendor).append("' ")
+                    .append("AND pnv.TECHNOLOGY = '").append(technology).append("' ")
+                    .append("AND pcv.NODE_AGGREGATION != '' ")
+                    .append("AND pcv.NODE_AGGREGATION IS NOT NULL ")
+                    .append("AND pcv.TIME_AGGREGATION != '' ")
+                    .append("AND pcv.TIME_AGGREGATION IS NOT NULL ");
+
+            if (nodes != null && !nodes.trim().isEmpty()) {
+                String formattedNodes = Arrays.stream(nodes.split(","))
+                        .map(String::trim)
+                        .filter(node -> !node.isEmpty())
+                        .collect(Collectors.joining("','", "'", "'"));
+                sqlBuilder.append("AND pnv.NODE IN (").append(formattedNodes).append(") ");
+            }
+
+            String sqlQuery = sqlBuilder.toString();
+			Set<String> categorySet = new HashSet<>();
+            logger.info("Executing CategorySequenceForCounterVariable Query: {}", sqlQuery);
+            try (ResultSet resultSet = getResultFromPMDatabase(sqlQuery, contextMap)) {
+
+                List<String> selectExpressions = new ArrayList<>();
+				Set<String> dataTypeExpressions = new HashSet<>();
+				
+                selectExpressions.add("concat(finalKey,'00')  AS rowKey");
+                selectExpressions.add("ptime AS PT");
+				selectExpressions.add("interfacename AS pmemsId");
+
+				dataTypeExpressions.add("finalKey:STRING");
+				dataTypeExpressions.add("ptime:STRING");
+				dataTypeExpressions.add("interfacename:STRING");
+
+                while (resultSet != null && resultSet.next()) {
+                    
+                    String variableId = resultSet.getString("PM_COUNTER_VARIABLE_ID_PK");
+                    String sequenceNo = resultSet.getString("SEQUENCE_NO") != null ? resultSet.getString("SEQUENCE_NO")
+                            : "null";
+                    String categoryName = resultSet.getString("CATEGORY_NAME") != null
+                            ? resultSet.getString("CATEGORY_NAME")
+                            : "null";
+
+					
+                    if (variableId != null && sequenceNo != null && categoryName != null) {
+                        String expression = String.format(
+                                "CASE WHEN categoryname = '%s' THEN CAST( C%s AS STRING) END AS `%s`",
+                                categoryName.replace("'", "''").toUpperCase(),
+                                sequenceNo,
+                                variableId);
+                        selectExpressions.add(expression);
+						dataTypeExpressions.add("C"+sequenceNo+":STRING");
+						String orcFilePath = contextMap.get("KPIORCPath");
+						if(orcFilePath !=null ){
+							orcFilePath=orcFilePath.replace("$categoryname/",categoryName.toUpperCase()+"/");
+							categorySet.add(orcFilePath);
+						}else{
+							logger.error("orc path is null");
+						}
+                    }
+                }
+
+                if (!selectExpressions.isEmpty() && selectExpressions.size() > 2) {
+                    counterVariableQuery.append(String.join(",", selectExpressions));
+                    counterVariableQuery.append(" FROM orcTemp");
+					counterVariableQueryType.append(String.join(",", dataTypeExpressions));
+					
+                } else {
+                    counterVariableQuery = new StringBuilder("SELECT 1 AS dummy FROM orcTemp");
+                }
+            }
+			orcPaths.append(String.join(",", categorySet));
+			logger.info("ORC_COUNTERS_DATATYPE : {}", counterVariableQueryType.toString());
+			logger.info("counterVariableQuery : {}", counterVariableQuery.toString());
+			jobContext.setParameters("ORC_COUNTERS_DATATYPE",counterVariableQueryType.toString());
+			// jobContext.setParameters("ORC_PATH",orcPaths.toString());
+			// jobContext.setParameters("ORC_BASE_PATH",StringUtils.substringBefore(contextMap.get("KPIORCPath"),"domain="));
+			// logger.info("ORC_BASE_PATH : {}", StringUtils.substringBefore(contextMap.get("KPIORCPath"),"domain="));
+			// logger.info("ORC_PATH : {}", orcPaths);
+
+        } catch (Exception e) {
+            logger.error("Exception While Building Category Sequence For Counter Variable Query: {}", e.getMessage(), e);
+        }
+
+        logger.info("Completed Getting Category Sequence For Counter Variable :: ");
+        return counterVariableQuery.toString();
+    }
 
 	private void initializeCounterMapQuery(JobContext jobcontext, Map<String, String> counterAggrMap)
 			throws Exception {
@@ -183,7 +294,7 @@ public class GetCounterAndKPIDetails extends Processor {
 			logger.error("Exception while getting PMCounterVariable Map Query: {}", e.getMessage(), e);
 		}
 
-		logger.info("COUNTER_MAP_QUERY : {}", counterQueryMap);
+		logger.debug("COUNTER_MAP_QUERY : {}", counterQueryMap);
 		jobcontext.setParameters("COUNTER_MAP_QUERY", counterQueryMap);
 	}
 
@@ -224,8 +335,8 @@ public class GetCounterAndKPIDetails extends Processor {
 			logger.error("Exception while getting PMCounterVariable Query : {}", e.getMessage(), e);
 		}
 
-		logger.info("COUNTER_DATA_SELECT_QUERY : {}", counterSelect);
-		logger.info("COUNTER_SELECT_QUERY : {}", mapSelect);
+		logger.debug("COUNTER_DATA_SELECT_QUERY : {}", counterSelect);
+		logger.debug("COUNTER_SELECT_QUERY : {}", mapSelect);
 
 		jobcontext.setParameters("COUNTER_DATA_SELECT_QUERY", counterSelect);
 		jobcontext.setParameters("COUNTER_SELECT_QUERY", mapSelect);
@@ -248,7 +359,7 @@ public class GetCounterAndKPIDetails extends Processor {
 			logger.error("Exception While Getting Counter Variable Index : {}", e.getMessage(), e);
 		}
 
-		logger.info("COUNTER_VARIABLE_INDEX Size : {}", indexMap.size());
+		logger.debug("COUNTER_VARIABLE_INDEX Size : {}", indexMap.size());
 
 		try {
 			String json = mapper.writeValueAsString(indexMap);
@@ -307,7 +418,7 @@ public class GetCounterAndKPIDetails extends Processor {
 
 			String sql = sqlBuilder.toString();
 
-			logger.info("KPIFORMULA_MAPJSON SQL query: {}", sql);
+			logger.debug("KPIFORMULA_MAPJSON SQL query: {}", sql);
 
 			ResultSet rs = getResultFromPMDatabase(sql, contextMap);
 			while (rs.next()) {
@@ -344,7 +455,7 @@ public class GetCounterAndKPIDetails extends Processor {
 			}
 		}
 
-		logger.info("KPIFORMULA_MAPJSON Size : {}", kpiFormulaFinalMap.size());
+		logger.error("KPIFORMULA_MAPJSON Size : {}", kpiFormulaFinalMap.size());
 
 		try {
 			String json = mapper.writeValueAsString(kpiFormulaFinalMap);
@@ -454,7 +565,7 @@ public class GetCounterAndKPIDetails extends Processor {
 				}
 				String json = new ObjectMapper().writeValueAsString(netypeRowKeyAppenderMap);
 
-				logger.info("NETYPE_ROW_KEY_APPENDER_MAP Size : {}", netypeRowKeyAppenderMap.size());
+				logger.debug("NETYPE_ROW_KEY_APPENDER_MAP Size : {}", netypeRowKeyAppenderMap.size());
 				jobcontext.setParameters("netypeRowKeyAppenderMap", json);
 			}
 		} catch (Exception e) {
@@ -499,7 +610,7 @@ public class GetCounterAndKPIDetails extends Processor {
 						.map(String::trim)
 						.map(node -> "'" + node + "'")
 						.collect(Collectors.joining(","));
-				sqlBuilder.append(" AND UPPER(kf.NODE) IN (").append(formattedNodes).append(")");
+				sqlBuilder.append(" AND kf.NODE IN (").append(formattedNodes).append(")");
 			}
 		}
 
@@ -514,7 +625,7 @@ public class GetCounterAndKPIDetails extends Processor {
 				.append("AND DELETED = 0) u");
 
 		String sqlQuery = sqlBuilder.toString();
-		logger.info("Executing ALL_KPI_CODE Query: {}", sqlQuery);
+		logger.debug("Executing ALL_KPI_CODE Query: {}", sqlQuery);
 
 		try (ResultSet resultSet = getResultFromPMDatabase(sqlQuery, contextMap)) {
 			if (resultSet != null && resultSet.next()) {
@@ -525,22 +636,23 @@ public class GetCounterAndKPIDetails extends Processor {
 			logger.error("Error While Retrieving All KPI Codes: {}", e.getMessage(), e);
 		}
 
-		logger.info("ALL_KPI_CODE Size : {}", kpiCodeList != null ? kpiCodeList.length() : 0);
+		logger.debug("ALL_KPI_CODE Size : {}", kpiCodeList != null ? kpiCodeList.length() : 0);
 		return kpiCodeList;
 	}
 
 	private String getKPIDataMetaColumns(JobContext jobcontext, Map<String, String> contextMap) {
-		String metaColumns = "";
-		String sql = "SELECT VALUE FROM PM_CONFIGURATION WHERE NAME = 'KPI_DATA_META_COLUMNS' AND TYPE = 'JOB'";
-		try (ResultSet resultSet = getResultFromPMDatabase(sql, contextMap)) {
-			if (resultSet != null && resultSet.next()) {
-				metaColumns = resultSet.getString("VALUE");
-				jobcontext.setParameters("KPI_DATA_META_COLUMNS", metaColumns);
-			}
-		} catch (SQLException e) {
-			logger.error("Error Retrieving KPI_DATA_META_COLUMNS From PM_CONFIGURATION: {}", e.getMessage(), e);
-		}
-		logger.info("KPI_DATA_META_COLUMNS: {}", metaColumns);
+		String metaColumns = "BND,CEL,D,DL1,DL2,DL3,DL4,DOG,DT,EGID,EID,ENB,GC,H1,H2,HR,L1,L2,L3,L4,parquetLevel,NEID,NEL,NET,NS,OG,RowKeyAppender,SFID,V,nename,NAM,NN,SAT,SAV,H1_NEID,H2_NEID,ENB_NEID,RK,PT,Date,Time,TN,TC,MV,MT,DNAM,SC";
+		// String sql = "SELECT VALUE FROM PM_CONFIGURATION WHERE NAME = 'KPI_DATA_META_COLUMNS' AND TYPE = 'JOB'";
+		// try (ResultSet resultSet = getResultFromPMDatabase(sql, contextMap)) {
+		// 	if (resultSet != null && resultSet.next()) {
+		// 		metaColumns = resultSet.getString("VALUE");
+		// 		jobcontext.setParameters("KPI_DATA_META_COLUMNS", metaColumns);
+		// 	}
+		// } catch (SQLException e) {
+		// 	logger.error("Error Retrieving KPI_DATA_META_COLUMNS From PM_CONFIGURATION: {}", e.getMessage(), e);
+		// }
+		// logger.debug("KPI_DATA_META_COLUMNS: {}", metaColumns);
+		jobcontext.setParameters("KPI_DATA_META_COLUMNS", metaColumns);
 		return metaColumns;
 	}
 

@@ -9,10 +9,9 @@ import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import com.enttribe.sparkrunner.context.JobContextImpl;
 import com.enttribe.sparkrunner.processors.streaming.StreamingKafkaForEachBatch;
-// import com.enttribe.sparkrunner.udf.EventParser;
-// import com.enttribe.sparkrunner.udf.AlertParser;
 import com.enttribe.sparkrunner.udf.GetGeographyColumns;
 import com.enttribe.sparkrunner.udf.JuniperParser;
+import com.enttribe.sparkrunner.udf.JuniperParserNew;
 
 public class ParserMain {
 
@@ -36,10 +35,10 @@ public class ParserMain {
                                 + "\"dumpTopic\": \"juniper.events.dump\","
                                 + "\"emsVendor\": \"juniper\","
                                 + "\"isAlertJob\": true,"
-                                + "\"isEventJob\": true,"
-                                + "\"isEventEnrich\": true,"
+                                + "\"isEventJob\": false,"
+                                + "\"isEventEnrich\": false,"
                                 + "\"notifTopic\": \"juniper.nifi.streaming.notification\","
-                                + "\"parserName\": \"EventParser\","
+                                + "\"parserName\": \"JuniperParserNew\","
                                 + "\"eventParserName\": \"EventParser\","
                                 + "\"alertParserName\": \"AlertParser\","
                                 + "\"technology\": \"COMMON\","
@@ -51,7 +50,7 @@ public class ParserMain {
                                 + "\"checkPointLoc\": \"s3a://nst-fm/checkpoints/juniper-transport-parser\","
                                 + "\"discardDomain\": \"'TRANSPORT'\","
                                 + "\"discardVendor\": \"'JUNIPER'\","
-                                + "\"startingOffset\": \"latest\","
+                                + "\"startingOffset\": \"earliest\","
                                 + "\"isHeartBeatFlow\": \"NA\","
                                 + "\"notificationjob\": \"false\","
                                 + "\"closeInstanceJob\": \"false\","
@@ -156,6 +155,10 @@ public class ParserMain {
                 // session.udf().register(alertParser.getName(), alertParser, alertParser.getReturnType());
 
 
+                JuniperParserNew juniperParserNew = new JuniperParserNew();
+                session.udf().register(juniperParserNew.getName(), juniperParserNew, juniperParserNew.getReturnType());
+
+
                 GetGeographyColumns getGeographyColumns = new GetGeographyColumns();
                 session.udf().register(getGeographyColumns.getName(), getGeographyColumns,
                                 getGeographyColumns.getReturnType());
@@ -167,7 +170,7 @@ public class ParserMain {
                 jobContext.setParameters("SPARK_KAFKA_TOPIC", "juniper.events");
                 jobContext.setParameters("SPARK_KAFKA_GROUP", "juniper.events.group");
                 jobContext.setParameters("SPARK_KAFKA_MAX_OFFSETS_PER_TRIGGER", "10");
-                jobContext.setParameters("SPARK_KAFKA_STARTING_OFFSETS", "latest");
+                jobContext.setParameters("SPARK_KAFKA_STARTING_OFFSETS", "earliest");
                 jobContext.setParameters("SPARK_KAFKA_BATCH_INTERVAL", "10");
                 jobContext.setParameters("checkPointLoc", "s3a://fault-management/checkpoints/JUNIPER");
                 jobContext.setParameters("outputMode", "Append");

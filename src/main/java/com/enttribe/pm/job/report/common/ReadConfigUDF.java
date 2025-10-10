@@ -112,13 +112,6 @@ public class ReadConfigUDF implements
         if (!metaColumnsMap.containsKey("HR")) {
             metaColumnsMap.put("HR", "Time");
         }
-
-        // String selectedHeader = extraParametersMap.get("selectedHeader");
-        // if (selectedHeader.equalsIgnoreCase("default") && metaColumnsMap.containsKey("NODENAME")) {
-        //     metaColumnsMap.remove("NODENAME");
-        //     metaColumnsMap.put("ENTITY_ID", "Node");
-        //     metaColumnsMap.put("ENTITY_NAME", "Node Name");
-        // }
         return metaColumnsMap;
     }
 
@@ -1140,7 +1133,19 @@ public class ReadConfigUDF implements
                         conditionMap.put(condition, selectedHexColor);
                     }
                 } else {
-                    String inputFilter = config.getString("inputFilter");
+                    String inputFilter;
+                    try {
+                        Object inputFilterObj = config.get("inputFilter");
+                        if (inputFilterObj == null) {
+                            logger.info("[ReadConfigUDF] inputFilter is null, Skipping condition");
+                            continue;
+                        }
+                        inputFilter = inputFilterObj.toString();
+                    } catch (Exception e) {
+                        logger.error("[ReadConfigUDF] Error Getting inputFilter: {}", e.getMessage(), e);
+                        continue;
+                    }
+                    
                     selectedHexColor = config.getString("selectedHexColor");
 
                     String operator = switch (selectedCondition) {

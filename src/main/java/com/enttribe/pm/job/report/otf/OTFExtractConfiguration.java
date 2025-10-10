@@ -1026,7 +1026,7 @@ public class OTFExtractConfiguration extends Processor {
       if (isNodeMultiSelect.equals("true")) {
          logger.error("CASE 0: CUSTOM NODE SELECTED!!");
 
-          // Added For Managed Objects (MO)
+         // Added For Managed Objects (MO)
          if (node.contains("CLUBBED") && mo.contains("CLUBBED")) {
             aggregationLevel = "L0";
             jobContext.setParameters("CUSTOM_INDIA_LEVEL", "TRUE");
@@ -1910,7 +1910,7 @@ public class OTFExtractConfiguration extends Processor {
 
       String frequencyPartition = "";
 
-      if (frequency.equalsIgnoreCase("FIVEMIN")) {
+      if (frequency.equalsIgnoreCase("FIVEMIN") || frequency.equalsIgnoreCase("5 MIN")) {
          frequencyPartition = "FIVE_MIN";
       } else {
          frequencyPartition = "QUARTERLY";
@@ -1934,7 +1934,7 @@ public class OTFExtractConfiguration extends Processor {
          }
       }
 
-      logger.error("Updated Trino ORC File Path List Size: {}", pathList.size());
+      logger.error("Trino ORC File Path List Size: {}", pathList.size());
       return String.join(",", pathList);
    }
 
@@ -2207,7 +2207,7 @@ public class OTFExtractConfiguration extends Processor {
                   .map(name -> "'" + name + "'")
                   .collect(Collectors.joining(","));
             logger.error("Node Info List: {}", formattedNodes);
-   
+
             nodeAndAggregationDetails.put("NODE_NAME_LIST", formattedNodes);
 
             nodeAndAggregationDetails.put("IS_NODE_MULTI_SELECT", "true");

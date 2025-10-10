@@ -40,7 +40,7 @@ public class PMJobTrigger {
     private static JobContext setParametersToJobContext(JobContext jobContext) {
 
         jobContext.setParameters("SPARK_PM_JDBC_URL",
-                "jdbc:mysql://localhost:3306/PERFORMANCE_RLTL?autoReconnect=true&allowPublicKeyRetrieval=true&useSSL=false");
+                "jdbc:mysql://localhost:3306/PERFORMANCE?autoReconnect=true&allowPublicKeyRetrieval=true&useSSL=false");
         jobContext.setParameters("SPARK_PM_JDBC_DRIVER", "org.mariadb.jdbc.Driver");
         jobContext.setParameters("SPARK_PM_JDBC_USERNAME", "root");
         jobContext.setParameters("SPARK_PM_JDBC_PASSWORD", "root");
@@ -70,22 +70,22 @@ public class PMJobTrigger {
         jobContext.setParameters("SPARK_MINIO_BUCKET_NAME_PM", "performance");
 
         jobContext.setParameters("DOMAIN", "TRANSPORT");
-        jobContext.setParameters("VENDOR", "JUNIPER");
+        jobContext.setParameters("VENDOR", "NOKIA");
         jobContext.setParameters("TECHNOLOGY", "COMMON");
         jobContext.setParameters("MODULE", "PM");
         jobContext.setParameters("NE_TYPE", "'INTERFACE','ROUTER'");
         jobContext.setParameters("NODES", "INTERFACE,ROUTER");
         jobContext.setParameters("EMS_TYPE", "NA");
-        jobContext.setParameters("RAW_FILE_PATH", "performance/JOB/RawFiles/JUNIPER/");
-        jobContext.setParameters("RAW_FILE_PATH_SUFFIX", "20250808/0515");
-        jobContext.setParameters("PROCESSING_DATE", "250808");
-        jobContext.setParameters("PROCESSING_HOUR", "0515");
-        jobContext.setParameters("AUDIT_TIME", "2025-08-08 05:15:00");
+        jobContext.setParameters("RAW_FILE_PATH", "performance/JOB/RawFiles/NOKIA/");
+        jobContext.setParameters("RAW_FILE_PATH_SUFFIX", "20250929/0000");
+        jobContext.setParameters("PROCESSING_DATE", "250929");
+        jobContext.setParameters("PROCESSING_HOUR", "0000");
+        jobContext.setParameters("AUDIT_TIME", "2025-09-29 00:00:00");
         jobContext.setParameters("IS_FILE_FILTER_REQUIRED", "true");
         jobContext.setParameters("KPI_ORC_PATH", "s3a://performance/JOB/ORC/");
         jobContext.setParameters("DI_ORC_PATH", "s3a://performance/JOB/DI/");
         jobContext.setParameters("JOB_TYPE", "QUARTERLY");
-        jobContext.setParameters("CQL_TABLE_NAME", "combinequarterlypm_test");
+        jobContext.setParameters("CQL_TABLE_NAME", "combinequarterlypm");
 
         return jobContext;
 

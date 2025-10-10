@@ -182,7 +182,7 @@ public class GetStaticMapForPMProcess extends Processor {
             });
         });
         String categoryVsDeltaString = mapper.writeValueAsString(categoryVsDeltaCounterMap);
-        logger.debug("CATEGORY_VS_DELTACOUNTER :{}", categoryVsDeltaString);
+        logger.info("CATEGORY_VS_DELTACOUNTER :{}", categoryVsDeltaString);
         jobContext.setParameters(CATEGORY_VS_DELTACOUNTER, categoryVsDeltaString);
     }
  
@@ -216,7 +216,7 @@ public class GetStaticMapForPMProcess extends Processor {
             }
  
             String finalSql = sqlBuilder.toString();
-            logger.debug("Executing Max Sequence No Query: {}", finalSql);
+            logger.info("Executing Max Sequence No Query: {}", finalSql);
  
             ResultSet resultSet = getResultSetFromPMDatabase(finalSql, contextMap);
             if (resultSet != null && resultSet.next()) {
@@ -226,7 +226,7 @@ public class GetStaticMapForPMProcess extends Processor {
                 }
             }
  
-            logger.debug("Max Sequence Number: {}", maxSequenceNo);
+            logger.info("Max Sequence Number: {}", maxSequenceNo);
  
         } catch (Exception e) {
             logger.error("Exception while getting Max Sequence Number: {}", e.getMessage(), e);
@@ -362,7 +362,7 @@ public class GetStaticMapForPMProcess extends Processor {
             }
  
             String sqlQuery = sqlBuilder.toString();
-            logger.debug("CATEGORY_COUNTER_MAPJSON Query: {}", sqlQuery);
+            logger.info("CATEGORY_COUNTER_MAPJSON Query: {}", sqlQuery);
  
             ResultSet resultSet = getResultSetFromPMDatabase(sqlQuery, contextMap);
             counterCategoryMap = new HashMap<>();
@@ -377,7 +377,7 @@ public class GetStaticMapForPMProcess extends Processor {
                     counterCategoryMap.put(resultSet.getString(2), counterInfoMapList);
                 }
             }
-            logger.debug("CATEGORY_COUNTER_MAPJSON Size: {}", counterCategoryMap.size());
+            logger.info("CATEGORY_COUNTER_MAPJSON Size: {}", counterCategoryMap.size());
             String counterMapJson = new ObjectMapper().writeValueAsString(counterCategoryMap);
             jobContext.setParameters("CATEGORY_COUNTER_MAPJSON", counterMapJson);
  

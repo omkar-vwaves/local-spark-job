@@ -67,15 +67,22 @@ public class ORCWriteForTrino extends Processor {
                     domain, vendor, technology, emsType, sequenceno);
 
             StringBuilder mapQuery = new StringBuilder();
-            for (int i = 1; i <= sequenceno; i++) {
+            for (int i = 1; i <= 700; i++) {
                 mapQuery.append("rawcounters['").append(i).append("'] AS `C").append(i).append("`, ");
             }
 
             String mapSelect = StringUtils.substringBeforeLast(mapQuery.toString(), ",");
+
+            // String query = "SELECT finalKey, DateKey, HourKey, QuarterKey, pmemsid, nename, neid, "
+            //         + mapSelect + " , fiveminutekey, interface_name AS interfacename, frequency, '"
+            //         + domain + "' AS domain, '" + vendor + "' AS vendor, '" + emsType + "' AS emstype, '" + technology
+            //         + "' AS technology, date, time, ptime, categoryname FROM AllCounterData ";
+
+              
             String query = "SELECT finalKey, DateKey, HourKey, QuarterKey, pmemsid, nename, neid, "
-                    + mapSelect + " , fiveminutekey, interface_name AS interfacename, frequency, '"
+                    + mapSelect + " ,  frequency, '"
                     + domain + "' AS domain, '" + vendor + "' AS vendor, '" + emsType + "' AS emstype, '" + technology
-                    + "' AS technology, date, time, ptime, categoryname FROM AllCounterData ";
+                    + "' AS technology, date, time, ptime, categoryname, interface_name AS interfacename, fiveminutekey FROM AllCounterData ";
 
             logger.info("Generated ORCWriteForTrino Query: {}", query);
 

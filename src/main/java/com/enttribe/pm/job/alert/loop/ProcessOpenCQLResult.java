@@ -2,6 +2,7 @@ package com.enttribe.pm.job.alert.loop;
 
 import com.enttribe.sparkrunner.processors.Processor;
 
+import java.io.Serializable;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -39,6 +40,16 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import java.util.Properties;
 import java.util.concurrent.Future;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.apache.spark.api.java.function.ForeachPartitionFunction;
+import org.apache.spark.api.java.function.MapFunction;
+import org.apache.spark.sql.*;
+import static org.apache.spark.sql.functions.*;
+import static org.apache.spark.sql.functions.col;
+import org.apache.spark.sql.api.java.UDF1;
+import org.apache.spark.sql.types.DataTypes;
 
 public class ProcessOpenCQLResult extends Processor {
 
@@ -182,7 +193,15 @@ public class ProcessOpenCQLResult extends Processor {
         logger.info("[ProcessOpenCQLResult] Input Config Map: {}", inputConfigMap);
         logger.info("[ProcessOpenCQLResult] Node And Aggregation Details Map: {}", nodeAndAggregationDetailsMap);
         logger.info("[ProcessOpenCQLResult] Extra Parameters Map: {}", extraParametersMap);
-        logger.info("[ProcessOpenCQLResult] KPI Code Name Map: {}", extraParametersMap);
+        logger.info("[ProcessOpenCQLResult] KPI Code Name Map: {}", kpiCodeNameMap);
+
+        String ruleType = extraParametersMap.getOrDefault("RULE_TYPE", "STATIC_EXPRESSION");
+        if (ruleType.equalsIgnoreCase("TREND_RULE")) {
+            if (this.dataFrame != null && !this.dataFrame.isEmpty()) {
+                proceedWithTrendRule(jobContext, finalMap, extraParametersMap, aggregationLevel, this.dataFrame);
+            }
+            return this.dataFrame;
+        }
 
         String cqlQuery = buildCQLQuery(finalMap, aggregationLevel, jobContext);
         logger.info("CQL Query On InputDF : {}", cqlQuery);
@@ -213,6 +232,403 @@ public class ProcessOpenCQLResult extends Processor {
         logger.info("[ProcessOpenCQLResult] Execution Completed! Time Taken: {} Minutes | {} Seconds", minutes,
                 seconds);
         return this.dataFrame;
+    }
+
+    private static void proceedWithTrendRule(JobContext jobContext,
+            Map<String, String> finalMap,
+            Map<String, String> extraParametersMap,
+            String aggregationLevel,
+            Dataset<Row> inputDataset) {
+
+        String timestamp = jobContext.getParameter("TIMESTAMP");
+        String expression = extraParametersMap.get("EXPRESSION");
+        logger.info("Input Parameters - Timestamp={}, Expression={}", timestamp, expression);
+
+        String cqlQuery = buildCQLQuery(finalMap, aggregationLevel, jobContext);
+        logger.info("CQL Query On InputDF : {}", cqlQuery);
+
+        Dataset<Row> cqlResultDF = jobContext.sqlctx().sql(cqlQuery);
+
+        Dataset<Row> equalsDF = filterByTimestamp(cqlResultDF, timestamp, true);
+        Dataset<Row> notEqualsDF = filterByTimestamp(cqlResultDF, timestamp, false);
+
+        List<String> kpiColumns = getKPIColumns(notEqualsDF);
+        Dataset<Row> aggDF = computeKPIAggregates(notEqualsDF, kpiColumns);
+        Dataset<Row> joinedDF = joinWithAggregates(equalsDF, aggDF);
+
+        ExpressionData exprData = parseKPIExpression(expression);
+        logger.info("Parsed Expression - KPI Codes: {}, Operators: {}, Percentages: {}",
+                exprData.kpiCodes, exprData.operators, exprData.percentages);
+
+        Dataset<Row> resultDF = applyDynamicTrendRule(jobContext, joinedDF, exprData);
+
+        Dataset<Row> validatedDF = applyExpressionValidation(resultDF, exprData, expression);
+        // validatedDF.show(5, false);
+        logger.info("+++++++[VALIDATED DF]+++++++");
+
+        Map<String, String> map = new LinkedHashMap<>();
+        map.putAll(finalMap);
+        map.putAll(extraParametersMap);
+        Dataset<AlarmWrapper> alarmWrapper = generateAlarmWrapper(validatedDF, map, exprData.kpiCodes);
+        // alarmWrapper.show(5, false);
+        logger.info("+++++++[ALARM WRAPPER]+++++++");
+
+        String kafkaBroker = jobContextMap.get("SPARK_KAFKA_BROKER_ANSIBLE");
+        produceMessages(alarmWrapper, kafkaBroker);
+    }
+
+    private static Dataset<AlarmWrapper> generateAlarmWrapper(Dataset<Row> validatedDF,
+            Map<String, String> map,
+            List<String> kpiCodes) {
+
+        Dataset<Row> alertRows = validatedDF.filter(functions.col("result").equalTo(1));
+
+        Dataset<AlarmWrapper> alarmWrappers = alertRows.map((MapFunction<Row, AlarmWrapper>) row -> {
+
+            AlarmWrapper alarmWrapper = new AlarmWrapper();
+            Object tsObj = row.getAs("timestamp");
+            Long epochMillis = null;
+            if (tsObj instanceof java.sql.Timestamp) {
+                epochMillis = ((java.sql.Timestamp) tsObj).getTime();
+            } else if (tsObj instanceof String) {
+                epochMillis = toEpochMillis((String) tsObj);
+            } else if (tsObj instanceof Long) {
+                epochMillis = (Long) tsObj;
+            }
+            alarmWrapper.setOpenTime(epochMillis);
+            alarmWrapper.setChangeTime(epochMillis);
+            alarmWrapper.setReportingTime(epochMillis);
+
+            alarmWrapper.setAlarmExternalId(map.get("ALARM_EXTERNAL_ID"));
+            alarmWrapper.setAlarmCode(map.get("ALARM_CODE"));
+            alarmWrapper.setAlarmName(map.get("ALARM_NAME"));
+            alarmWrapper.setSeverity(map.get("SEVERITY"));
+            alarmWrapper.setActualSeverity(map.get("ACTUAL_SEVERITY"));
+            alarmWrapper.setDomain(map.get("DOMAIN"));
+            alarmWrapper.setVendor(map.get("VENDOR"));
+            alarmWrapper.setSenderName(map.get("SENDER_NAME"));
+            alarmWrapper.setTechnology(map.get("TECHNOLOGY"));
+            alarmWrapper.setClassification(map.get("CLASSIFICATION"));
+            alarmWrapper.setProbableCause(map.get("EXPRESSION"));
+            alarmWrapper.setDescription(map.get("DESCRIPTION"));
+            alarmWrapper.setAlarmGroup(map.get("ALARM_GROUP"));
+            alarmWrapper.setServiceAffected(safeParseBoolean(map, "SERVICE_AFFECTING"));
+            alarmWrapper.setManualCloseable(safeParseBoolean(map, "MANUALLY_CLOSEABLE"));
+            alarmWrapper.setCorrelationFlag(safeParseBoolean(map, "CORRELATION_FLAG"));
+            alarmWrapper.setSenderIp("-");
+            alarmWrapper.setEntityStatus("-");
+            alarmWrapper.setKafkaTopicName(jobContextMap.get("KAFKA_TOPIC_NAME"));
+
+            alarmWrapper.setEventType(getSafeString(row, "ENTITY_TYPE"));
+            alarmWrapper.setEntityType(getSafeString(row, "ENTITY_TYPE"));
+            alarmWrapper.setEntityId(getSafeString(row, "ENTITY_ID"));
+            alarmWrapper.setEntityName(getSafeString(row, "ENTITY_NAME"));
+            alarmWrapper.setLocationId(getSafeString(row, "ENTITY_NAME"));
+            alarmWrapper.setSubentity(getSafeString(row, "SUBENTITY"));
+            alarmWrapper.setNeCategory(getSafeString(row, "ENTITY_TYPE"));
+
+            alarmWrapper.setGeographyL1Name(getSafeString(row, "L1"));
+            alarmWrapper.setGeographyL2Name(getSafeString(row, "L2"));
+            alarmWrapper.setGeographyL3Name(getSafeString(row, "L3"));
+            alarmWrapper.setGeographyL4Name(getSafeString(row, "L4"));
+
+            alarmWrapper.setLatitude(null);
+            alarmWrapper.setLongitude(null);
+
+            String expression = getSafeString(row, "original_exp");
+            expression = expression.replace("(IF(", "");
+            expression = expression.replace(", 1, 0))", "");
+            String bufferWindow = map.getOrDefault("BUFFER_WINDOW", "1");
+
+            StringBuilder additionalDetail = new StringBuilder();
+            additionalDetail.append("EXPRESSION=").append(expression)
+                    .append(", BUFFER_WINDOW=").append(bufferWindow);
+
+            for (String kpiCode : kpiCodes) {
+                String kpiDisplay = map.getOrDefault(kpiCode, "NA");
+
+                Integer currentValue = getSafeInt(row, "kpijson[" + kpiCode + "]");
+                Double bufferValue = getSafeDouble(row, "AVG_kpijson[" + kpiCode + "]");
+                Double percentChange = getSafeDouble(row, "pctChange_" + kpiCode);
+
+                additionalDetail.append(", ")
+                        .append(kpiDisplay)
+                        .append("={CURRENT_VALUE=").append(currentValue)
+                        .append(" AND AVG_BUFFER_VALUE=").append(bufferValue)
+                        .append(" AND PERCENT_CHANGE=")
+                        .append(percentChange != null ? String.format("%.2f", percentChange) : "NA").append("%}");
+            }
+
+            alarmWrapper.setAdditionalDetail(additionalDetail.toString());
+
+            return alarmWrapper;
+
+        }, Encoders.bean(AlarmWrapper.class));
+
+        return alarmWrappers;
+    }
+
+    private static String getSafeString(Row row, String colName) {
+        Object val = row.getAs(colName);
+        return val != null ? val.toString() : null;
+    }
+
+    private static Integer getSafeInt(Row row, String colName) {
+        Object val = row.getAs(colName);
+        if (val instanceof Integer)
+            return (Integer) val;
+        if (val instanceof Long)
+            return ((Long) val).intValue();
+        if (val instanceof String)
+            return Integer.parseInt((String) val);
+        return null;
+    }
+
+    private static Double getSafeDouble(Row row, String colName) {
+        Object val = row.getAs(colName);
+        if (val instanceof Double)
+            return (Double) val;
+        if (val instanceof Float)
+            return ((Float) val).doubleValue();
+        if (val instanceof Long)
+            return ((Long) val).doubleValue();
+        if (val instanceof Integer)
+            return ((Integer) val).doubleValue();
+        if (val instanceof String)
+            return Double.parseDouble((String) val);
+        return null;
+    }
+
+    // private static AlarmWrapper generateAlarmWrapper(Dataset<Row> validatedDF,
+    // Map<String, String> map) {
+
+    // Dataset<Row> alertRows =
+    // validatedDF.filter(functions.col("result").equalTo(1));
+    // List<Row> alertList = alertRows.collectAsList();
+
+    // AlarmWrapper alarmWrapper = new AlarmWrapper();
+
+    // String openTime = map.get("TIMESTAMP");
+    // Long epoch = toEpochMillis(openTime);
+
+    // String alarmExternalId = map.get("ALARM_EXTERNAL_ID");
+    // String alarmCode = map.get("ALARM_CODE");
+    // String alarmName = map.get("ALARM_NAME");
+    // String severity = map.get("SEVERITY");
+    // String description = map.get("DESCRIPTION");
+    // String probableCause = map.get("EXPRESSION");
+    // String actualSeverity = map.get("ACTUAL_SEVERITY");
+    // String domain = map.get("DOMAIN");
+    // String vendor = map.get("VENDOR");
+    // String technology = map.get("TECHNOLOGY");
+    // String senderName = map.get("SENDER_NAME");
+    // String classification = map.get("CLASSIFICATION");
+    // String senderIp = "-";
+    // String kafkaTopicName = jobContextMap.get("KAFKA_TOPIC_NAME");
+    // String alarmGroup = map.get("ALARM_GROUP");
+    // boolean serviceAffected = safeParseBoolean(map, "SERVICE_AFFECTING");
+    // boolean manualCloseable = safeParseBoolean(map, "MANUALLY_CLOSEABLE");
+    // boolean correlationFlag = safeParseBoolean(map, "CORRELATION_FLAG");
+    // String entityStatus = "-";
+
+    // for (Row row : alertList) {
+
+    // String entityType = row.getAs("ENTITY_TYPE");
+    // String entityId = row.getAs("ENTITY_ID");
+    // String entityName = row.getAs("ENTITY_NAME");
+    // String subentity = row.getAs("SUBENTITY");
+    // String geoL1Name = row.getAs("L1");
+    // String geoL2Name = row.getAs("L2");
+    // String geoL3Name = row.getAs("L3");
+    // String geoL4Name = row.getAs("L4");
+    // String additionalDetails = null;
+
+    // alarmWrapper.setOpenTime(toEpochMillis(openTime));
+    // alarmWrapper.setChangeTime(toEpochMillis(openTime));
+    // alarmWrapper.setReportingTime(toEpochMillis(openTime));
+    // alarmWrapper.setAlarmExternalId(alarmExternalId);
+    // alarmWrapper.setAlarmCode(alarmCode);
+    // alarmWrapper.setAlarmName(alarmName);
+    // alarmWrapper.setSeverity(severity);
+    // alarmWrapper.setActualSeverity(actualSeverity);
+    // alarmWrapper.setDomain(domain);
+    // alarmWrapper.setVendor(vendor);
+    // alarmWrapper.setSenderName(senderName);
+    // alarmWrapper.setTechnology(technology);
+    // alarmWrapper.setClassification(classification);
+    // alarmWrapper.setEventType(entityType);
+    // alarmWrapper.setProbableCause(probableCause);
+    // alarmWrapper.setEntityId(entityId);
+    // alarmWrapper.setEntityName(entityName);
+    // alarmWrapper.setEntityType(entityType);
+    // alarmWrapper.setEntityStatus(entityStatus);
+    // alarmWrapper.setLocationId(entityName);
+    // alarmWrapper.setSubentity(subentity);
+    // alarmWrapper.setSenderIp(senderIp);
+    // alarmWrapper.setLatitude(null);
+    // alarmWrapper.setLongitude(null);
+    // alarmWrapper.setServiceAffected(serviceAffected);
+    // alarmWrapper.setDescription(description);
+    // alarmWrapper.setManualCloseable(manualCloseable);
+    // alarmWrapper.setGeographyL1Name(geoL1Name);
+    // alarmWrapper.setGeographyL2Name(geoL2Name);
+    // alarmWrapper.setGeographyL3Name(geoL3Name);
+    // alarmWrapper.setGeographyL4Name(geoL4Name);
+    // alarmWrapper.setKafkaTopicName(kafkaTopicName);
+    // alarmWrapper.setCorrelationFlag(correlationFlag);
+    // alarmWrapper.setNeCategory(entityType);
+    // alarmWrapper.setAdditionalDetail(additionalDetails);
+    // alarmWrapper.setAlarmGroup(alarmGroup);
+
+    // }
+
+    // return alarmWrapper;
+
+    // }
+
+    private static Dataset<Row> filterByTimestamp(Dataset<Row> df, String timestamp, boolean equals) {
+        if (equals)
+            return df.filter(col("timestamp").equalTo(lit(timestamp)));
+        else
+            return df.filter(col("timestamp").notEqual(lit(timestamp)));
+    }
+
+    private static List<String> getKPIColumns(Dataset<Row> df) {
+        List<String> kpiColumns = Arrays.stream(df.columns())
+                .filter(c -> c.startsWith("kpijson"))
+                .collect(Collectors.toList());
+        logger.info("KPI Columns: {}", kpiColumns);
+        return kpiColumns;
+    }
+
+    private static Dataset<Row> computeKPIAggregates(Dataset<Row> df, List<String> kpiColumns) {
+        List<Column> aggExprs = new ArrayList<>();
+        for (String colName : kpiColumns) {
+            aggExprs.add(avg(col(colName)).alias("AVG_" + colName));
+        }
+
+        return df.groupBy("nodename")
+                .agg(aggExprs.get(0), aggExprs.subList(1, aggExprs.size()).toArray(new Column[0]));
+    }
+
+    private static Dataset<Row> joinWithAggregates(Dataset<Row> df, Dataset<Row> aggDF) {
+        Dataset<Row> joinedDF = df.join(aggDF, df.col("nodename").equalTo(aggDF.col("nodename")), "left");
+        return joinedDF.drop(aggDF.col("nodename"));
+    }
+
+    private static class ExpressionData implements Serializable {
+        private static final long serialVersionUID = 1L;
+
+        List<String> kpiCodes;
+        List<String> operators;
+        List<Double> percentages;
+
+        ExpressionData(List<String> codes, List<String> ops, List<Double> pct) {
+            this.kpiCodes = codes;
+            this.operators = ops;
+            this.percentages = pct;
+        }
+    }
+
+    private static ExpressionData parseKPIExpression(String expression) {
+        Pattern kpiPattern = Pattern.compile("KPI#(\\d+)\\s*([+\\-±])(\\d+)%");
+        Matcher matcher = kpiPattern.matcher(expression);
+
+        List<String> kpiCodes = new ArrayList<>();
+        List<String> operators = new ArrayList<>();
+        List<Double> percentages = new ArrayList<>();
+
+        while (matcher.find()) {
+            kpiCodes.add(matcher.group(1));
+            operators.add(matcher.group(2));
+            percentages.add(Double.parseDouble(matcher.group(3)));
+        }
+
+        return new ExpressionData(kpiCodes, operators, percentages);
+    }
+
+    private static Dataset<Row> applyDynamicTrendRule(JobContext jobContext,
+            Dataset<Row> joinedDF,
+            ExpressionData exprData) {
+
+        Dataset<Row> df = joinedDF;
+        for (int i = 0; i < exprData.kpiCodes.size(); i++) {
+            String code = exprData.kpiCodes.get(i);
+            String op = exprData.operators.get(i);
+            double pct = exprData.percentages.get(i) / 100.0;
+
+            Column currentValCol = col("kpijson[" + code + "]");
+            Column bufferValCol = col("AVG_kpijson[" + code + "]");
+
+            Column percentChangeCol = currentValCol.minus(bufferValCol)
+                    .divide(bufferValCol)
+                    .multiply(100)
+                    .alias("pctChange_" + code);
+
+            Column conditionCol;
+            switch (op) {
+                case "+" -> conditionCol = currentValCol.gt(bufferValCol.multiply(1 + pct));
+                case "-" -> conditionCol = currentValCol.lt(bufferValCol.multiply(1 - pct));
+                case "+/-" -> conditionCol = currentValCol.lt(bufferValCol.multiply(1 - pct))
+                        .or(currentValCol.gt(bufferValCol.multiply(1 + pct)));
+                default -> conditionCol = lit(false);
+            }
+            df = df.withColumn("cond_" + code, conditionCol)
+                    .withColumn("pctChange_" + code, percentChangeCol);
+        }
+        return df;
+    }
+
+    private static Dataset<Row> applyExpressionValidation(
+            Dataset<Row> df,
+            ExpressionData exprData,
+            String expression) {
+        final String originalExp = expression;
+        String replacedExp = originalExp;
+        for (int i = 0; i < exprData.kpiCodes.size(); i++) {
+            String code = exprData.kpiCodes.get(i);
+            String op = exprData.operators.get(i);
+            double pctDouble = exprData.percentages.get(i);
+            int pctInt = (int) pctDouble; // ensure "20" not "20.0"
+
+            String kpiPattern = "KPI#" + code + " " + op + pctInt + "%";
+            replacedExp = replacedExp.replace(kpiPattern, "cond_" + code);
+        }
+        final String replacedExpFinal = replacedExp;
+
+        UDF1<Row, Integer> evalExprUDF = (Row row) -> {
+            String exprToEval = replacedExpFinal;
+            try {
+                for (String code : exprData.kpiCodes) {
+                    Boolean condVal = row.getAs("cond_" + code);
+                    if (condVal == null)
+                        condVal = false;
+                    exprToEval = exprToEval.replace("cond_" + code, condVal.toString());
+                }
+
+                Expression evaluatedExpression = new Expression(exprToEval);
+                String resultStr = evaluatedExpression.eval();
+
+                return (resultStr != null && (resultStr.equalsIgnoreCase("true") || resultStr.equals("1"))) ? 1 : 0;
+            } catch (Exception e) {
+                return 0;
+            }
+        };
+        df.sparkSession().udf().register("evalExprUDF", evalExprUDF, DataTypes.IntegerType);
+
+        Dataset<Row> resultDF = df
+                .withColumn("original_exp", functions.lit(originalExp))
+                .withColumn("replaced_exp", functions.lit(replacedExpFinal))
+                .withColumn(
+                        "result",
+                        functions.callUDF(
+                                "evalExprUDF",
+                                functions.struct(
+                                        Arrays.stream(df.columns())
+                                                .map(functions::col)
+                                                .toArray(Column[]::new))));
+
+        return resultDF;
     }
 
     private JobContext setSparkConf(JobContext jobContext) {
@@ -924,6 +1340,53 @@ public class ProcessOpenCQLResult extends Processor {
         }
     }
 
+    public static void produceMessages(Dataset<AlarmWrapper> dataset, String kafkaBroker) {
+
+        dataset.foreachPartition((ForeachPartitionFunction<AlarmWrapper>) partition -> {
+            if (!partition.hasNext())
+                return;
+
+            Properties props = new Properties();
+            props.put("bootstrap.servers", kafkaBroker);
+            props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+            props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+            props.put("acks", "1");
+            props.put("retries", 3);
+            props.put("request.timeout.ms", 15000);
+
+            try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
+                Gson gson = new GsonBuilder().disableHtmlEscaping().create();
+
+                while (partition.hasNext()) {
+                    AlarmWrapper wrapper = partition.next();
+                    if (wrapper == null)
+                        continue;
+
+                    String topic = wrapper.getKafkaTopicName();
+                    String json = gson.toJson(wrapper);
+
+                    ProducerRecord<String, String> record = new ProducerRecord<>(topic, json);
+
+                    try {
+                        Future<RecordMetadata> future = producer.send(record, (metadata, exception) -> {
+                            if (exception == null) {
+                                logger.info("Produced Message to Topic={} Partition={} Offset={}",
+                                        metadata.topic(), metadata.partition(), metadata.offset());
+                            } else {
+                                logger.error("Kafka Produce Error: {}", exception.getMessage());
+                            }
+                        });
+                        future.get();
+                    } catch (Exception e) {
+                        logger.error("Failed to send message for wrapper: {}", wrapper, e);
+                    }
+                }
+            } catch (Exception e) {
+                logger.error("Kafka Producer Failure In Partition", e);
+            }
+        });
+    }
+
     public static void produceMessage(AlarmWrapper wrapper, String kafkaTopicName, String kafkaBroker) {
 
         if (wrapper == null) {
@@ -1436,7 +1899,7 @@ public class ProcessOpenCQLResult extends Processor {
         String technology = finalMap.get("TECHNOLOGY");
         String kpiCodeList = finalMap.get("kpiCodeList");
 
-        cqlQuery.append("SELECT ");
+        cqlQuery.append("SELECT timestamp, datalevel, ");
 
         if (kpiCodeList == null || kpiCodeList.isEmpty()) {
             return null;

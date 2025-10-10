@@ -73,13 +73,21 @@ public class NokiaParserForDelta implements UDF4<String, String, byte[], Boolean
     public static void main(String[] args) {
 
         String zipFilePath = "/path/to/your/03-12-24/0945/file.zip";
-        String fileName = "juniper-switch.json";
+        String fileName = "Nokia-switch.json";
 
         try {
             byte[] jsonContent = Files
                     .readAllBytes(Paths.get("/Users/bootnext-mac-111/Downloads/snmp-output.json"));
 
-            List<Row> rowList = new NokiaParserForDelta().call(zipFilePath, fileName, jsonContent, false);
+            List<Row> rowList = new NokiaParserForDelta().call(zipFilePath, fileName,
+                    jsonContent, false);
+            for (int rowIndex = 0; rowIndex < Math.min(5, rowList.size()); rowIndex++) {
+                Row row = rowList.get(rowIndex);
+                for (int i = 0; i < row.length() && i < 20; i++) {
+                    System.out.println("Row : " + rowIndex + " && Column : " + i + " -> " +
+                            row.get(i));
+                }
+            }
             System.out.println("Size of rowList: " + rowList.size());
 
         } catch (Exception e) {
@@ -99,9 +107,9 @@ public class NokiaParserForDelta implements UDF4<String, String, byte[], Boolean
         String[] lines = jsonString.split("\n");
 
         int index = 1;
-        if (isDelta) {
+        
             getCategoryVsDeltaCounterMap();
-        }
+
         for (String line : lines) {
 
             try {
@@ -109,6 +117,7 @@ public class NokiaParserForDelta implements UDF4<String, String, byte[], Boolean
 
                 String processingTime = getProcessedTimeFromZipFilePath(zipFilePath);
 
+                // EXTRACT CATEGORY
                 String category = mainJSONObject.getString("name");
                 if (category != null) {
                     if (category.equalsIgnoreCase("snmp")) {
@@ -117,58 +126,68 @@ public class NokiaParserForDelta implements UDF4<String, String, byte[], Boolean
                     category = category.toUpperCase();
                 }
 
+                // EXTRACT PMEMSID
                 JSONObject tagObject = mainJSONObject.getJSONObject("tags");
-                String pmemsid = tagObject.getString("router_ip");
+                String pmemsid = tagObject.getString("agent_host");
+                // String pmemsid = tagObject.getString("router_ip");
 
                 Map<String, String> counterValueMap = new HashMap<>();
+                Map<String, String> deltaCounterValueMap = new HashMap<>();
                 if (pmemsid != null) {
                     try {
 
                         String interfaceDesc = tagObject.getString("ifDescr");
-                        counterValueMap.put("INTERFACE_DESC", interfaceDesc);
+                        // if (!isDelta) {
+                        //     counterValueMap.put("IFDESCR", interfaceDesc);
+                        // }
+                        counterValueMap.put("IFDESCR", interfaceDesc);
+                        // deltaCounterValueMap.put("IFDESCR", interfaceDesc);
 
                         String extractedInterfaceDesc = interfaceDesc.split(",")[0];
                         if (extractedInterfaceDesc != null) {
-                            pmemsid = pmemsid + "_" + extractedInterfaceDesc;
+                            pmemsid = pmemsid + "_" + extractedInterfaceDesc; // Added
                         }
+                        // 172.31.31.148_ge-0/1/7
                     } catch (Exception e) {
-                        logger.error("Exception While Getting Interface Description: {}", e.getMessage());
+                        logger.error("Exception While getting interface_desc:");
                     }
                 }
 
-                Long timestamp = mainJSONObject.getLong("timestamp");
-                String dateTime = getQuarterlyDateTime(timestamp);
-                System.out.println("Timestamp: " + String.valueOf(timestamp) + " Date Time: " + dateTime);
+                // EXTRACT TIMESTAMP
+                String dateTime = getQuarterlyDateTime(mainJSONObject.getLong("timestamp"));
 
+
+                // INITIALIZE COUNTER VALUE MAP
                 JSONObject fieldsJSONObject = mainJSONObject.getJSONObject("fields");
-                if (isDelta) {
-                    if (categoryVSDetla != null && categoryVSDetla.containsKey(category)) {
-                        List<String> counterList = categoryVSDetla.get(category);
+                
+                List<String> deltaKeys = categoryVSDetla != null ? categoryVSDetla.get(category) : null;
                         for (String key : fieldsJSONObject.keySet()) {
-                            Object value = fieldsJSONObject.get(key);
-                            if (counterList.contains(key.toUpperCase()) && value != null
-                                    && !value.toString().equals("null") && !value.toString().equals("")) {
-                                counterValueMap.put(key.trim().toUpperCase(), String.valueOf(value));
-                            }
+                    String value = fieldsJSONObject.optString(key, null);
+                    if (value != null && !"null".equals(value)) {
+                        String upperKey = key.toUpperCase();
+                        counterValueMap.put(upperKey, value);
+                        if (deltaKeys != null && deltaKeys.contains(upperKey)) {
+                            deltaCounterValueMap.put(upperKey, value);
                         }
                     }
-                } else {
-                    for (String key : fieldsJSONObject.keySet()) {
-                        Object value = fieldsJSONObject.get(key);
-                        counterValueMap.put(key.trim().toUpperCase(), String.valueOf(value));
-                    }
                 }
 
-                String key = category + "##" + pmemsid + "##" + dateTime + "##" + index;
-                fileContent.add(RowFactory.create(processingTime, key, counterValueMap));
-                index++;
+                String baseKey = category + "##" + pmemsid ; // 1200 1145
+                // String deltaMapKey = baseKey + "##" + index++ ;
+                // String mapKey = baseKey + "##" + index++;
+                // String deltaMapKey = baseKey;
+                // String mapKey = baseKey ;
+                if(!deltaCounterValueMap.isEmpty()){
+                    fileContent.add(RowFactory.create(processingTime, baseKey, deltaCounterValueMap, true,dateTime));
+                }
+                fileContent.add(RowFactory.create(processingTime, baseKey, counterValueMap, false,dateTime));
+                
 
             } catch (Exception e) {
-                logger.error("Exception While Processing JSON Line: {}, Error Message: {}", line, e.getMessage());
+                logger.error("NokiaParser: Exception While Processing JSON Line: {}, Error Message: {}", line,
+                        e.getMessage());
             }
         }
-
-        System.out.println("Result Size : " + index);
         return fileContent;
     }
 
@@ -216,6 +235,8 @@ public class NokiaParserForDelta implements UDF4<String, String, byte[], Boolean
         fields.add(DataTypes.createStructField("mapKey", DataTypes.StringType, true));
         fields.add(DataTypes.createStructField("counterValueMap",
                 DataTypes.createMapType(DataTypes.StringType, DataTypes.StringType, true), true));
+        fields.add(DataTypes.createStructField("isDelta", DataTypes.BooleanType, true));
+        fields.add(DataTypes.createStructField("dateTime", DataTypes.StringType, true));
         return DataTypes.createArrayType(DataTypes.createStructType(fields));
     }
 }

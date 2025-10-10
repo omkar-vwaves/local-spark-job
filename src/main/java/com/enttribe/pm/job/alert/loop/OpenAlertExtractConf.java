@@ -412,6 +412,35 @@ public class OpenAlertExtractConf extends Processor {
 
             parameters.put("kpiCodeList", kpiCodeList.toString());
 
+            // Added
+
+            String frequency = "15 MIN";
+            try {
+                if (configJson.has("frequency")) {
+                    JSONArray freqArray = configJson.getJSONArray("frequency");
+                    if (freqArray != null && freqArray.length() > 0) {
+                        String freq = freqArray.getString(0);
+                        if (freq != null && !freq.isEmpty()) {
+                            frequency = freq.toUpperCase();
+                        }
+                    }
+                }
+            } catch (Exception e) {
+            }
+            parameters.put("FREQUENCY", frequency);
+            String ruleType = null;
+            if (configJson.has("ruleType")) {
+                ruleType = configJson.optString("ruleType", "STATIC_EXPRESSION");
+            }
+            ruleType = (ruleType == null || ruleType.isEmpty()) ? "STATIC_EXPRESSION" : ruleType;
+            parameters.put("RULE_TYPE", ruleType);
+
+            JSONObject conditionObj = configJson.getJSONObject("conditionObj");
+            String bufferWindow = null;
+            if (conditionObj.has("bufferWindow")) {
+                bufferWindow = conditionObj.optString("bufferWindow", "1");
+            }
+            parameters.put("BUFFER_WINDOW", bufferWindow);
             return parameters;
 
         } catch (Exception e) {
