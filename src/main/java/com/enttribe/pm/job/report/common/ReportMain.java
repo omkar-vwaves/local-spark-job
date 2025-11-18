@@ -26,7 +26,7 @@ public class ReportMain {
                 long startTime = System.currentTimeMillis();
                 logger.info("🚀 ReportMain Execution Started!");
 
-                SparkConf conf = getSparkConf();
+                SparkConf conf = getSparkConf();                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                
 
                 SparkSession session = SparkSession.builder()
                                 .config(conf)

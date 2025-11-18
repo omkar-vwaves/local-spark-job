@@ -11,7 +11,7 @@ import com.enttribe.sparkrunner.context.JobContextImpl;
 import com.enttribe.sparkrunner.processors.streaming.StreamingKafkaForEachBatch;
 import com.enttribe.sparkrunner.udf.GetGeographyColumns;
 import com.enttribe.sparkrunner.udf.JuniperParser;
-import com.enttribe.sparkrunner.udf.JuniperParserNew;
+// import com.enttribe.sparkrunner.udf.JuniperParserNew;
 
 public class ParserMain {
 
@@ -155,8 +155,8 @@ public class ParserMain {
                 // session.udf().register(alertParser.getName(), alertParser, alertParser.getReturnType());
 
 
-                JuniperParserNew juniperParserNew = new JuniperParserNew();
-                session.udf().register(juniperParserNew.getName(), juniperParserNew, juniperParserNew.getReturnType());
+                // JuniperParserNew juniperParserNew = new JuniperParserNew();
+                // session.udf().register(juniperParserNew.getName(), juniperParserNew, juniperParserNew.getReturnType());
 
 
                 GetGeographyColumns getGeographyColumns = new GetGeographyColumns();

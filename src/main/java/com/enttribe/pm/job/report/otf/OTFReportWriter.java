@@ -50,32 +50,31 @@ public class OTFReportWriter extends Processor {
     private static String SPARK_MINIO_ACCESS_KEY = "SPARK_MINIO_ACCESS_KEY";
     private static String SPARK_MINIO_SECRET_KEY = "SPARK_MINIO_SECRET_KEY";
     private static String SPARK_MINIO_BUCKET_NAME_PM = "SPARK_MINIO_BUCKET_NAME_PM";
+    private static final boolean IS_LOG_ENABLED = false;
 
     public OTFReportWriter() {
         super();
-        logger.error("OTFReportWriter No Argument Constructor Called!");
     }
 
     public OTFReportWriter(Dataset<Row> dataframe, Integer id, String processorName) {
         super(id, processorName);
         this.dataFrame = dataframe;
-        logger.error("OTFReportWriter Constructor Called with Input DataFrame With ID: {} and Processor Name: {}", id,
-                processorName);
     }
 
     public OTFReportWriter(Integer id, String processorName) {
         super(id, processorName);
-        logger.error("OTFReportWriter Constructor Called with ID: {} and Processor Name: {}", id, processorName);
     }
 
     @Override
     public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) throws Exception {
 
-        if(this.dataFrame!=null) {
+        if (this.dataFrame != null) {
             this.dataFrame.show(5);
-            logger.error("++++++++++[FINAL GENERATED REPORT]++++++++++");
+            logger.info("++++++++++[FINAL GENERATED REPORT]++++++++++");
         }
-        logger.error("[OTFReportWriter] Execution Started!");
+        if (IS_LOG_ENABLED) {
+            logger.info("[OTFReportWriter] Execution Started!");
+        }
 
         long startTime = System.currentTimeMillis();
 
@@ -86,8 +85,11 @@ public class OTFReportWriter extends Processor {
         SPARK_MINIO_SECRET_KEY = jobContextMap.get("SPARK_MINIO_SECRET_KEY");
         SPARK_MINIO_BUCKET_NAME_PM = jobContextMap.get("SPARK_MINIO_BUCKET_NAME_PM");
 
-        logger.error("MinIO Credentials: Endpoint={}, AccessKey={}, SecretKey={}, BucketName={}",
-                SPARK_MINIO_ENDPOINT_URL, SPARK_MINIO_ACCESS_KEY, SPARK_MINIO_SECRET_KEY, SPARK_MINIO_BUCKET_NAME_PM);
+        if (IS_LOG_ENABLED) {
+            logger.info("MinIO Credentials: Endpoint={}, AccessKey={}, SecretKey={}, BucketName={}",
+                    SPARK_MINIO_ENDPOINT_URL, SPARK_MINIO_ACCESS_KEY, SPARK_MINIO_SECRET_KEY,
+                    SPARK_MINIO_BUCKET_NAME_PM);
+        }
 
         String extraParameters = jobContextMap.get("EXTRA_PARAMETERS");
         String reportWidgetDetails = jobContextMap.get("REPORT_WIDGET_DETAILS");
@@ -115,18 +117,25 @@ public class OTFReportWriter extends Processor {
                 new TypeReference<Map<String, Map<String, String>>>() {
                 });
 
-        logger.error("RAG Configuration: {}", ragConfigurationMap);
+        if (IS_LOG_ENABLED) {
+            logger.info("RAG Configuration: {}", ragConfigurationMap);
+        }
 
         String reportWidgetIdPk = reportWidgetDetailsMap.get("REPORT_WIDGET_ID_PK");
         jobContext.setParameters("REPORT_WIDGET_ID_PK", reportWidgetIdPk);
-        logger.error("REPORT_WIDGET_ID_PK '{}' Set to Job Context Successfully!", reportWidgetIdPk);
 
         String generatedReportId = reportWidgetDetailsMap.get("GENERATED_REPORT_ID");
         jobContext.setParameters("GENERATED_REPORT_ID", generatedReportId);
-        logger.error("GENERATED_REPORT_ID '{}' Set to Job Context Successfully!", generatedReportId);
+
+        if (IS_LOG_ENABLED) {
+            logger.info("REPORT_WIDGET_ID_PK '{}' Set to Job Context Successfully!", reportWidgetIdPk);
+            logger.info("GENERATED_REPORT_ID '{}' Set to Job Context Successfully!", generatedReportId);
+        }
 
         String reportFileName = getReportFileName(jobContextMap, extraParametersMap, reportWidgetDetailsMap);
-        logger.error("Report File Name: {}", reportFileName);
+        if (IS_LOG_ENABLED) {
+            logger.info("Report File Name: {}", reportFileName);
+        }
 
         Dataset<Row> expectedDF = this.dataFrame;
 
@@ -137,7 +146,9 @@ public class OTFReportWriter extends Processor {
                     "REPORT_FORMAT_TYPE is NULL. Please Ensure Report Format Type is Properly Set.");
         }
 
-        logger.error("Report Format Type: {}", reportFormatType);
+        if (IS_LOG_ENABLED) {
+            logger.info("Report Format Type: {}", reportFormatType);
+        }
 
         if (reportFormatType.equalsIgnoreCase("csv")) {
             processCSVReport(expectedDF, extraParametersMap, jobContext, reportFileName);
@@ -147,12 +158,13 @@ public class OTFReportWriter extends Processor {
             throw new Exception("REPORT_FORMAT_TYPE is Invalid. Please Ensure Input Report Format is Properly Set.");
         }
 
-        long endTime = System.currentTimeMillis();
-        long durationMillis = endTime - startTime;
-        long minutes = durationMillis / 60000;
-        long seconds = (durationMillis % 60000) / 1000;
-
-        logger.error("[OTFReportWriter] Execution Completed! Time Taken: {} Minutes | {} Seconds", minutes, seconds);
+        if (IS_LOG_ENABLED) {
+            long endTime = System.currentTimeMillis();
+            long durationMillis = endTime - startTime;
+            long minutes = durationMillis / 60000;
+            long seconds = (durationMillis % 60000) / 1000;
+            logger.info("[OTFReportWriter] Execution Completed! Time Taken: {} Minutes | {} Seconds", minutes, seconds);
+        }
 
         return this.dataFrame;
     }
@@ -173,27 +185,36 @@ public class OTFReportWriter extends Processor {
 
         String reportWidgetFilePath = reportFileName;
         jobContext.setParameters("REPORT_WIDGET_FILE_PATH", reportWidgetFilePath);
-        logger.error("REPORT_WIDGET_FILE_PATH '{}' Set to Job Context Successfully!", reportWidgetFilePath);
 
         String generatedReportFilePath = "/" + finalMinioPath;
         jobContext.setParameters("GENERATED_REPORT_FILE_PATH", generatedReportFilePath);
-        logger.error("GENERATED_REPORT_FILE_PATH '{}' Set to Job Context Successfully!", generatedReportFilePath);
 
+        if (IS_LOG_ENABLED) {
+            logger.info("REPORT_WIDGET_FILE_PATH '{}' Set to Job Context Successfully!", reportWidgetFilePath);
+            logger.info("GENERATED_REPORT_FILE_PATH '{}' Set to Job Context Successfully!", generatedReportFilePath);
+
+        }
         AmazonS3 s3client = null;
         BufferedWriter writer = null;
         File csvFile = null;
 
         try {
-            logger.error("Step 1: Creating Temporary Directory: {}", tmpDirPath);
+            if (IS_LOG_ENABLED) {
+                logger.info("Step 1: Creating Temporary Directory: {}", tmpDirPath);
+            }
             File tmpDir = new File(tmpDirPath);
             if (!tmpDir.exists()) {
                 if (!tmpDir.mkdirs()) {
                     throw new RuntimeException("Failed to create temporary directory: " + tmpDirPath);
                 }
-                logger.error("Temporary Directory Created Successfully");
+                if (IS_LOG_ENABLED) {
+                    logger.info("Temporary Directory Created Successfully");
+                }
             }
 
-            logger.error("Step 2: Writing CSV using Streaming Approach");
+            if (IS_LOG_ENABLED) {
+                logger.info("Step 2: Writing CSV using Streaming Approach");
+            }
             csvFile = new File(tmpDirPath + "/" + reportFileName);
             writer = new BufferedWriter(new FileWriter(csvFile, false), 8192); // 8KB buffer
 
@@ -202,29 +223,35 @@ public class OTFReportWriter extends Processor {
                 throw new RuntimeException("DataFrame Has No Columns");
             }
 
-            logger.error("Processing DataFrame With {} Columns", columns.length);
+            if (IS_LOG_ENABLED) {
+                logger.info("Processing DataFrame With {} Columns", columns.length);
+            }
 
             // Write CSV header
             StringBuilder header = new StringBuilder();
             for (int i = 0; i < columns.length; i++) {
-                if (i > 0) header.append(",");
+                if (i > 0)
+                    header.append(",");
                 header.append(escapeCsvField(columns[i]));
             }
             writer.write(header.toString());
             writer.newLine();
 
             // STREAMING DATA PROCESSING - Use toLocalIterator() instead of collectAsList()
-            logger.error("Starting Streaming CSV Data Processing...");
+            if (IS_LOG_ENABLED) {
+                logger.info("Starting Streaming CSV Data Processing...");
+            }
             long rowCount = 0;
             Iterator<Row> rowIterator = expectedDF.toLocalIterator();
-            
+
             while (rowIterator.hasNext()) {
                 Row sparkRow = rowIterator.next();
-                
+
                 StringBuilder rowBuilder = new StringBuilder();
                 for (int j = 0; j < columns.length; j++) {
-                    if (j > 0) rowBuilder.append(",");
-                    
+                    if (j > 0)
+                        rowBuilder.append(",");
+
                     Object value = sparkRow.get(j);
                     if (value == null) {
                         rowBuilder.append(""); // Empty field
@@ -232,23 +259,26 @@ public class OTFReportWriter extends Processor {
                         rowBuilder.append(escapeCsvField(value.toString()));
                     }
                 }
-                
+
                 writer.write(rowBuilder.toString());
                 writer.newLine();
-                
+
                 rowCount++;
                 if (rowCount % 100000 == 0) {
-                    logger.error("Processed {} rows...", rowCount);
+                    if (IS_LOG_ENABLED) {
+                        logger.info("Processed {} rows...", rowCount);
+                    }
                     writer.flush(); // Flush buffer periodically
                 }
             }
 
             writer.flush(); // Final flush
-            logger.error("Total rows processed: {}", rowCount);
+            if (IS_LOG_ENABLED) {
+                logger.info("Total rows processed: {}", rowCount);
+                logger.info("📄 CSV File Created Successfully At: {}", csvFile.getAbsolutePath());
+                logger.info("Step 3: Creating MinIO S3 Client");
+            }
 
-            logger.error("📄 CSV File Created Successfully At: {}", csvFile.getAbsolutePath());
-
-            logger.error("Step 3: Creating MinIO S3 Client");
             AWSCredentials credentials = new BasicAWSCredentials(minioAccessKey, minioSecretKey);
             ClientConfiguration clientConfiguration = new ClientConfiguration();
             clientConfiguration.setSignerOverride("AWSS3V4SignerType");
@@ -262,39 +292,57 @@ public class OTFReportWriter extends Processor {
                     .withCredentials(new AWSStaticCredentialsProvider(credentials))
                     .build();
 
-            logger.error("MinIO S3 Client Created Successfully");
-
-            logger.error("Step 4: Uploading to Temporary MinIO Path: {}", tmpMinioPath);
+            if (IS_LOG_ENABLED) {
+                logger.info("MinIO S3 Client Created Successfully");
+                logger.info("Step 4: Uploading to Temporary MinIO Path: {}", tmpMinioPath);
+            }
             try (InputStream inputStream = new FileInputStream(csvFile)) {
                 ObjectMetadata metadata = new ObjectMetadata();
                 long csvFileSize = csvFile.length();
                 metadata.setContentLength(csvFileSize);
                 s3client.putObject(bucketName, tmpMinioPath, inputStream, metadata);
-                logger.error("CSV File Uploaded Successfully to Temporary MinIO Path");
 
                 String fileSize = String.valueOf(csvFileSize);
                 jobContext.setParameters("FILE_SIZE", fileSize);
-                logger.error("FILE_SIZE '{}' Set to Job Context Successfully!", fileSize);
+
+                if (IS_LOG_ENABLED) {
+                    logger.info("CSV File Uploaded Successfully to Temporary MinIO Path");
+                    logger.info("FILE_SIZE '{}' Set to Job Context Successfully!", fileSize);
+                }
             }
 
-            logger.error("Step 5: Copying to Final MinIO Path: {}", finalMinioPath);
+            if (IS_LOG_ENABLED) {
+                logger.info("Step 5: Copying to Final MinIO Path: {}", finalMinioPath);
+            }
             s3client.copyObject(bucketName, tmpMinioPath, bucketName, finalMinioPath);
-            logger.error("CSV File Copied Successfully to Final Path");
+            if (IS_LOG_ENABLED) {
+                logger.info("CSV File Copied Successfully to Final Path");
+            }
 
             if (!s3client.doesObjectExist(bucketName, finalMinioPath)) {
                 throw new RuntimeException("Failed to Verify Final File Exists: " + finalMinioPath);
             }
 
-            logger.error("Step 6: Deleting Temporary Files from MinIO");
+            if (IS_LOG_ENABLED) {
+                logger.info("Step 6: Deleting Temporary Files from MinIO");
+            }
             s3client.deleteObject(bucketName, tmpMinioPath);
-            logger.error("Temporary MinIO Objects Deleted Successfully");
+            if (IS_LOG_ENABLED) {
+                logger.info("Temporary MinIO Objects Deleted Successfully");
+            }
 
-            logger.error("Step 7: Cleaning Up Local Temporary Files");
+            if (IS_LOG_ENABLED) {
+                logger.info("Step 7: Cleaning Up Local Temporary Files");
+            }
             FileUtils.deleteDirectory(new File(tmpDirPath));
-            logger.error("Local Temporary Files Deleted Successfully");
+            if (IS_LOG_ENABLED) {
+                logger.info("Local Temporary Files Deleted Successfully");
+            }
 
-            logger.error("CSV Report Uploaded Successfully!");
-            logger.error("Final file location: {}/{}", bucketName, finalMinioPath);
+            if (IS_LOG_ENABLED) {
+                logger.info("CSV Report Uploaded Successfully!");
+                logger.error("Final file location: {}/{}", bucketName, finalMinioPath);
+            }
 
         } catch (Exception e) {
             logger.error("Error in Processing CSV Report, Message: {}, Error: {}", e.getMessage(), e);
@@ -321,14 +369,14 @@ public class OTFReportWriter extends Processor {
         if (field == null) {
             return "";
         }
-        
+
         // Check if field contains comma, quote, or newline
         if (field.contains(",") || field.contains("\"") || field.contains("\n") || field.contains("\r")) {
             // Escape quotes by doubling them and wrap in quotes
             String escaped = field.replace("\"", "\"\"");
             return "\"" + escaped + "\"";
         }
-        
+
         return field;
     }
 
@@ -337,8 +385,6 @@ public class OTFReportWriter extends Processor {
         headerFont.setBold(true);
         headerFont.setColor(IndexedColors.WHITE.getIndex());
         headerFont.setFontHeightInPoints((short) 11);
-
-        logger.error("Header Font Created Successfully!");
         return headerFont;
     }
 
@@ -358,8 +404,6 @@ public class OTFReportWriter extends Processor {
         headerStyle.setLeftBorderColor(IndexedColors.WHITE.getIndex());
         headerStyle.setRightBorderColor(IndexedColors.WHITE.getIndex());
         headerStyle.setFont(headerFont);
-
-        logger.error("Header Style Created Successfully!");
         return headerStyle;
     }
 
@@ -375,8 +419,6 @@ public class OTFReportWriter extends Processor {
         dataStyle.setBottomBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
         dataStyle.setLeftBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
         dataStyle.setRightBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
-
-        logger.error("Data Style Created Successfully!");
         return dataStyle;
     }
 
@@ -394,8 +436,6 @@ public class OTFReportWriter extends Processor {
         groupedHeaderStyle.setBottomBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
         groupedHeaderStyle.setLeftBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
         groupedHeaderStyle.setRightBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
-
-        logger.error("Grouped Header Style Created Successfully!");
         return groupedHeaderStyle;
     }
 
@@ -404,8 +444,6 @@ public class OTFReportWriter extends Processor {
         groupHeaderFont.setBold(true);
         groupHeaderFont.setColor(IndexedColors.WHITE.getIndex());
         groupHeaderFont.setFontHeightInPoints((short) 11);
-
-        logger.error("Group Header Font Created Successfully!");
         return groupHeaderFont;
     }
 
@@ -421,8 +459,6 @@ public class OTFReportWriter extends Processor {
         emptyGroupHeaderStyle.setBottomBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
         emptyGroupHeaderStyle.setLeftBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
         emptyGroupHeaderStyle.setRightBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
-
-        logger.error("Empty Group Header Style Created Successfully!");
         return emptyGroupHeaderStyle;
     }
 
@@ -448,7 +484,9 @@ public class OTFReportWriter extends Processor {
                 kpiGroupMap = new ObjectMapper().readValue(kpiGroup,
                         new TypeReference<Map<String, List<String>>>() {
                         });
-                logger.error("OTFReportWriter KPI Group Map: {}", kpiGroupMap);
+                if (IS_LOG_ENABLED) {
+                    logger.info("OTFReportWriter KPI Group Map: {}", kpiGroupMap);
+                }
             } catch (JsonMappingException e) {
                 logger.error("Failed to Parse KPI Group JSON (JsonMappingException): {}", e.getMessage());
                 kpiGroupMap = new HashMap<>();
@@ -460,7 +498,9 @@ public class OTFReportWriter extends Processor {
                 kpiGroupMap = new HashMap<>();
             }
         } else {
-            logger.error("No KPI Group Configuration Provided or Empty");
+            if (IS_LOG_ENABLED) {
+                logger.info("No KPI Group Configuration Provided or Empty");
+            }
         }
 
         String bucketName = SPARK_MINIO_BUCKET_NAME_PM;
@@ -489,35 +529,45 @@ public class OTFReportWriter extends Processor {
 
         String reportWidgetFilePath = reportFileName;
         jobContext.setParameters("REPORT_WIDGET_FILE_PATH", reportWidgetFilePath);
-        logger.error("REPORT_WIDGET_FILE_PATH '{}' Set to Job Context Successfully!", reportWidgetFilePath);
 
         String generatedReportFilePath = "/" + finalMinioPath;
         jobContext.setParameters("GENERATED_REPORT_FILE_PATH", generatedReportFilePath);
-        logger.error("GENERATED_REPORT_FILE_PATH '{}' Set to Job Context Successfully!", generatedReportFilePath);
+        if (IS_LOG_ENABLED) {
+            logger.info("REPORT_WIDGET_FILE_PATH '{}' Set to Job Context Successfully!", reportWidgetFilePath);
+            logger.info("GENERATED_REPORT_FILE_PATH '{}' Set to Job Context Successfully!", generatedReportFilePath);
 
+        }
         InputStream inputStream = null;
         AmazonS3 s3client = null;
         SXSSFWorkbook workbook = null;
         FileOutputStream fileOut = null;
 
         try {
-            logger.error("Step 1: Creating Temporary Directory: {}", tmpDirPath);
+            if (IS_LOG_ENABLED) {
+                logger.info("Step 1: Creating Temporary Directory: {}", tmpDirPath);
+            }
             File tmpDir = new File(tmpDirPath);
             if (!tmpDir.exists()) {
                 if (!tmpDir.mkdirs()) {
                     throw new RuntimeException("Failed to create temporary directory: " + tmpDirPath);
                 }
-                logger.error("Temporary Directory Created Successfully");
+                if (IS_LOG_ENABLED) {
+                    logger.info("Temporary Directory Created Successfully");
+                }
             }
 
-            logger.error("Step 2: Converting DataFrame to Excel using Streaming Approach");
+            if (IS_LOG_ENABLED) {
+                logger.info("Step 2: Converting DataFrame to Excel using Streaming Approach");
+            }
             String excelFilePath = tmpDirPath + "/" + reportFileName;
             File excelFile = new File(excelFilePath);
 
             String frequency = jobContext.getParameters().get("FREQUENCY");
             if (frequency == null || frequency.trim().isEmpty()) {
                 frequency = "DEFAULT";
-                logger.error("FREQUENCY parameter is null or empty, using default value: {}", frequency);
+                if (IS_LOG_ENABLED) {
+                    logger.info("FREQUENCY parameter is null or empty, using default value: {}", frequency);
+                }
             } else {
                 frequency = frequency.toUpperCase();
             }
@@ -525,7 +575,7 @@ public class OTFReportWriter extends Processor {
             // Create SXSSFWorkbook with row window for streaming
             workbook = new SXSSFWorkbook(1000); // Keep 1000 rows in memory
             workbook.setCompressTempFiles(true); // Compress temp files to save disk space
-            
+
             SXSSFSheet sheet = workbook.createSheet(frequency);
 
             // Create Consistent Font For Both Header Types
@@ -543,8 +593,10 @@ public class OTFReportWriter extends Processor {
                 throw new RuntimeException("DataFrame Has No Columns");
             }
 
-            logger.error("Processing DataFrame With {} Columns", columns.length);
-            
+            if (IS_LOG_ENABLED) {
+                logger.info("Processing DataFrame With {} Columns", columns.length);
+            }
+
             // Enable column tracking for auto-sizing in SXSSF
             List<Integer> autoSizeColumnIndices = new ArrayList<>();
             for (int i = 0; i < columns.length; i++) {
@@ -561,7 +613,9 @@ public class OTFReportWriter extends Processor {
                         String kpiCode = colName.split("-")[0];
                         if (kpiCode != null && !kpiCode.trim().isEmpty()) {
                             kpiCodeToIndexMap.put(kpiCode, i);
-                            logger.error("Mapped KPI Code {} to Column Index {}", kpiCode, i);
+                            if (IS_LOG_ENABLED) {
+                                logger.info("Mapped KPI Code {} to Column Index {}", kpiCode, i);
+                            }
                         }
                     } catch (Exception e) {
                         logger.error("Failed to Parse KPI Code From Column {}: {}", colName, e.getMessage());
@@ -582,12 +636,16 @@ public class OTFReportWriter extends Processor {
             SXSSFRow headerRow;
             int dataStartRowIdx;
             if (kpiGroupMap != null && !kpiGroupMap.isEmpty()) {
-                logger.error("KPI Group Map Is Present And Not Empty, Creating Grouped Headers!");
+                if (IS_LOG_ENABLED) {
+                    logger.info("KPI Group Map Is Present And Not Empty, Creating Grouped Headers!");
+                }
                 groupHeaderRow = sheet.createRow(0);
                 headerRow = sheet.createRow(1);
                 dataStartRowIdx = 2;
             } else {
-                logger.error("No KPI Group Map Provided, Skipping Grouped Headers!");
+                if (IS_LOG_ENABLED) {
+                    logger.info("No KPI Group Map Provided, Skipping Grouped Headers!");
+                }
                 headerRow = sheet.createRow(0);
                 dataStartRowIdx = 1;
             }
@@ -595,58 +653,78 @@ public class OTFReportWriter extends Processor {
             // Create Grouped headers - Each Column Gets Its Own Cell Initially
             Map<Integer, String> columnToGroupMap = new HashMap<>();
             Map<String, List<Integer>> groupToColumnsMap = new HashMap<>();
-            
+
             if (groupHeaderRow != null) {
-                logger.error("Processing KPI Group Headers: {}", kpiGroupMap);
-                logger.error("Available Columns In DataFrame: {}", Arrays.toString(columns));
+                if (IS_LOG_ENABLED) {
+                    logger.info("Processing KPI Group Headers: {}", kpiGroupMap);
+                    logger.info("Available Columns In DataFrame: {}", Arrays.toString(columns));
+                }
+
                 for (Map.Entry<String, List<String>> groupEntry : kpiGroupMap.entrySet()) {
                     String groupName = groupEntry.getKey();
                     List<String> groupColumns = groupEntry.getValue();
-                    logger.error("Processing Group: {} With Columns: {}", groupName, groupColumns);
+                    if (IS_LOG_ENABLED) {
+                        logger.info("Processing Group: {} With Columns: {}", groupName, groupColumns);
+                    }
                     for (String groupColumn : groupColumns) {
                         boolean found = false;
                         for (int i = 0; i < columns.length; i++) {
                             if (columns[i].equals(groupColumn)) {
                                 columnToGroupMap.put(i, groupName);
-                                logger.error("Mapped Column {} (Index {}) To Group {}", groupColumn, i, groupName);
+                                if (IS_LOG_ENABLED) {
+                                    logger.info("Mapped Column {} (Index {}) To Group {}", groupColumn, i, groupName);
+                                }
                                 found = true;
                                 break;
                             }
                         }
                         if (!found) {
-                            logger.error("Column {} From Group {} Not Found In DataFrame Columns", groupColumn,
-                                    groupName);
+                            if (IS_LOG_ENABLED) {
+                                logger.info("Column {} From Group {} Not Found In DataFrame Columns", groupColumn,
+                                        groupName);
+                            }
                         }
                     }
                 }
-                logger.error("Final Column To Group Mapping: {}", columnToGroupMap);
-                logger.error("Creating Group Headers For {} Columns", columns.length);
+                if (IS_LOG_ENABLED) {
+                    logger.info("Final Column To Group Mapping: {}", columnToGroupMap);
+                    logger.info("Creating Group Headers For {} Columns", columns.length);
+                }
+
                 for (int i = 0; i < columns.length; i++) {
                     SXSSFCell groupCell = groupHeaderRow.createCell(i);
                     String groupName = columnToGroupMap.get(i);
                     if (groupName != null) {
                         groupCell.setCellValue(groupName);
                         groupCell.setCellStyle(groupedHeaderStyle);
-                        logger.error("Set Group Header For Column {} (Index {}): {} With Grey Background",
-                                columns[i], i, groupName);
+                        if (IS_LOG_ENABLED) {
+                            logger.info("Set Group Header For Column {} (Index {}): {} With Grey Background",
+                                    columns[i], i, groupName);
+                        }
                     } else {
                         groupCell.setCellValue("");
                         groupCell.setCellStyle(emptyGroupHeaderStyle);
-                        logger.error(
-                                "No Group Found For Column {} (Index {}), Setting Empty Group Header With White Background",
-                                columns[i], i);
+                        if (IS_LOG_ENABLED) {
+                            logger.info(
+                                    "No Group Found For Column {} (Index {}), Setting Empty Group Header With White Background",
+                                    columns[i], i);
+                        }
                     }
                 }
 
                 // Merge Columns By Their Groups
-                logger.error("Merging Columns By Their Groups...");
+                if (IS_LOG_ENABLED) {
+                    logger.info("Merging Columns By Their Groups...");
+                }
                 for (Map.Entry<Integer, String> entry : columnToGroupMap.entrySet()) {
                     String groupName = entry.getValue();
                     Integer columnIndex = entry.getKey();
                     groupToColumnsMap.computeIfAbsent(groupName, k -> new ArrayList<>()).add(columnIndex);
                 }
 
-                logger.error("Group To Columns Mapping: {}", groupToColumnsMap);
+                if (IS_LOG_ENABLED) {
+                    logger.info("Group To Columns Mapping: {}", groupToColumnsMap);
+                }
                 for (Map.Entry<String, List<Integer>> groupEntry : groupToColumnsMap.entrySet()) {
                     String groupName = groupEntry.getKey();
                     List<Integer> columnIndices = groupEntry.getValue();
@@ -655,20 +733,26 @@ public class OTFReportWriter extends Processor {
                         int startIndex = columnIndices.get(0);
                         int endIndex = columnIndices.get(columnIndices.size() - 1);
                         sheet.addMergedRegion(new CellRangeAddress(0, 0, startIndex, endIndex));
-                        logger.error("Merged Group '{}' Header Cells From Column {} To {}", groupName, startIndex,
-                                endIndex);
+                        if (IS_LOG_ENABLED) {
+                            logger.info("Merged Group '{}' Header Cells From Column {} To {}", groupName, startIndex,
+                                    endIndex);
+                        }
                     } else {
-                        logger.error("Group '{}' Has Single Column At Index {}, No Merging Needed", groupName,
-                                columnIndices.get(0));
+                        if (IS_LOG_ENABLED) {
+                            logger.info("Group '{}' Has Single Column At Index {}, No Merging Needed", groupName,
+                                    columnIndices.get(0));
+                        }
                     }
                 }
-                logger.error("=== FINAL GROUP HEADER STRUCTURE ===");
-                logger.error("Total Columns: {}", columns.length);
-                logger.error("Grouped Columns: {} (Total Groups: {})", columnToGroupMap.size(),
-                        groupToColumnsMap.size());
-                logger.error("Non-Grouped Columns: {}", columns.length - columnToGroupMap.size());
-                logger.error("Groups: {}", groupToColumnsMap.keySet());
-                logger.error("=====================================");
+                if (IS_LOG_ENABLED) {
+                    logger.info("=== FINAL GROUP HEADER STRUCTURE ===");
+                    logger.info("Total Columns: {}", columns.length);
+                    logger.info("Grouped Columns: {} (Total Groups: {})", columnToGroupMap.size(),
+                            groupToColumnsMap.size());
+                    logger.info("Non-Grouped Columns: {}", columns.length - columnToGroupMap.size());
+                    logger.info("Groups: {}", groupToColumnsMap.keySet());
+                    logger.info("=====================================");
+                }
             }
 
             // Create regular headers
@@ -680,19 +764,21 @@ public class OTFReportWriter extends Processor {
 
             // STREAMING DATA PROCESSING - Use toLocalIterator() instead of collectAsList()
             // Support multiple sheets for large datasets (50k rows per sheet)
-            logger.error("Starting Streaming Data Processing with Multiple Sheets Support...");
+            if (IS_LOG_ENABLED) {
+                logger.info("Starting Streaming Data Processing with Multiple Sheets Support...");
+            }
             long totalRowCount = 0;
             int currentSheetIndex = 0;
             final int MAX_ROWS_PER_SHEET = 50000; // 50k rows per sheet
             SXSSFSheet currentSheet = sheet;
             SXSSFRow currentGroupHeaderRow = groupHeaderRow;
             SXSSFRow currentHeaderRow = headerRow;
-            
+
             Iterator<Row> rowIterator = expectedDF.toLocalIterator();
-            
+
             while (rowIterator.hasNext()) {
                 Row sparkRow = rowIterator.next();
-                
+
                 // Check if we need to create a new sheet
                 long currentSheetRowCount = totalRowCount % MAX_ROWS_PER_SHEET;
                 if (currentSheetRowCount == 0 && totalRowCount > 0) {
@@ -702,14 +788,16 @@ public class OTFReportWriter extends Processor {
                     currentSheet = workbook.createSheet(sheetName);
                     // Enable column tracking for auto-sizing in the new sheet
                     currentSheet.trackColumnsForAutoSizing(autoSizeColumnIndices);
-                    logger.error("Created new sheet: {} for rows {} to {}", sheetName, totalRowCount + 1, totalRowCount + MAX_ROWS_PER_SHEET);
-                    
+                    if (IS_LOG_ENABLED) {
+                        logger.info("Created new sheet: {} for rows {} to {}", sheetName, totalRowCount + 1,
+                                totalRowCount + MAX_ROWS_PER_SHEET);
+                    }
                     // Recreate headers for new sheet
                     if (kpiGroupMap != null && !kpiGroupMap.isEmpty()) {
                         currentGroupHeaderRow = currentSheet.createRow(0);
                         currentHeaderRow = currentSheet.createRow(1);
                         dataStartRowIdx = 2;
-                        
+
                         // Recreate group headers
                         for (int i = 0; i < columns.length; i++) {
                             SXSSFCell groupCell = currentGroupHeaderRow.createCell(i);
@@ -722,10 +810,9 @@ public class OTFReportWriter extends Processor {
                                 groupCell.setCellStyle(emptyGroupHeaderStyle);
                             }
                         }
-                        
+
                         // Recreate merged regions for group headers
                         for (Map.Entry<String, List<Integer>> groupEntry : groupToColumnsMap.entrySet()) {
-                            String groupName = groupEntry.getKey();
                             List<Integer> columnIndices = groupEntry.getValue();
                             if (columnIndices.size() > 1) {
                                 Collections.sort(columnIndices);
@@ -739,7 +826,7 @@ public class OTFReportWriter extends Processor {
                         currentHeaderRow = currentSheet.createRow(0);
                         dataStartRowIdx = 1;
                     }
-                    
+
                     // Recreate regular headers
                     for (int i = 0; i < columns.length; i++) {
                         SXSSFCell cell = currentHeaderRow.createCell(i);
@@ -747,9 +834,9 @@ public class OTFReportWriter extends Processor {
                         cell.setCellStyle(headerStyle);
                     }
                 }
-                
+
                 SXSSFRow dataRow = currentSheet.createRow((int) (currentSheetRowCount + dataStartRowIdx));
-                
+
                 for (int j = 0; j < columns.length; j++) {
                     SXSSFCell cell = dataRow.createCell(j);
                     Object value = sparkRow.get(j);
@@ -817,19 +904,24 @@ public class OTFReportWriter extends Processor {
 
                     cell.setCellStyle(cellStyle);
                 }
-                
+
                 totalRowCount++;
                 if (totalRowCount % 100000 == 0) {
-                    logger.error("Processed {} total rows across {} sheets...", totalRowCount, currentSheetIndex + 1);
+                    if (IS_LOG_ENABLED) {
+                        logger.info("Processed {} total rows across {} sheets...", totalRowCount,
+                                currentSheetIndex + 1);
+                    }
                 }
             }
 
-            logger.error("Total rows processed: {} across {} sheets", totalRowCount, currentSheetIndex + 1);
+            if (IS_LOG_ENABLED) {
+                logger.info("Total rows processed: {} across {} sheets", totalRowCount, currentSheetIndex + 1);
+            }
 
             // Auto-size columns and set formatting for all sheets
             for (int sheetIdx = 0; sheetIdx <= currentSheetIndex; sheetIdx++) {
                 SXSSFSheet sheetToFormat = (sheetIdx == 0) ? sheet : workbook.getSheetAt(sheetIdx);
-                
+
                 // Auto-size columns
                 for (int i = 0; i < columns.length; i++) {
                     sheetToFormat.autoSizeColumn(i);
@@ -841,7 +933,8 @@ public class OTFReportWriter extends Processor {
                 long sheetRowCount = Math.min(MAX_ROWS_PER_SHEET, totalRowCount - (sheetIdx * MAX_ROWS_PER_SHEET));
                 if (kpiGroupMap != null && !kpiGroupMap.isEmpty()) {
                     sheetToFormat.createFreezePane(0, 2);
-                    sheetToFormat.setAutoFilter(new CellRangeAddress(0, (int) (sheetRowCount + 1), 0, columns.length - 1));
+                    sheetToFormat
+                            .setAutoFilter(new CellRangeAddress(0, (int) (sheetRowCount + 1), 0, columns.length - 1));
                 } else {
                     sheetToFormat.createFreezePane(0, 1);
                     sheetToFormat.setAutoFilter(new CellRangeAddress(0, (int) sheetRowCount, 0, columns.length - 1));
@@ -853,9 +946,11 @@ public class OTFReportWriter extends Processor {
             workbook.write(fileOut);
             fileOut.flush();
 
-            logger.error("📊 Excel File Created Successfully At: {}", excelFilePath);
+            if (IS_LOG_ENABLED) {
+                logger.info("Excel File Created Successfully At: {}", excelFilePath);
+                logger.info("Step 3: Creating MinIO S3 Client");
+            }
 
-            logger.error("Step 3: Creating MinIO S3 Client");
             AWSCredentials credentials = new BasicAWSCredentials(minioAccessKey, minioSecretKey);
             ClientConfiguration clientConfiguration = new ClientConfiguration();
             clientConfiguration.setSignerOverride("AWSS3V4SignerType");
@@ -869,38 +964,50 @@ public class OTFReportWriter extends Processor {
                     .withCredentials(new AWSStaticCredentialsProvider(credentials))
                     .build();
 
-            logger.error("MinIO S3 Client Created Successfully");
-
-            logger.error("Step 4: Uploading to Temporary MinIO Path: {}", tmpMinioPath);
+            if (IS_LOG_ENABLED) {
+                logger.info("MinIO S3 Client Created Successfully");
+                logger.info("Step 4: Uploading to Temporary MinIO Path: {}", tmpMinioPath);
+            }
             inputStream = new FileInputStream(excelFile);
             ObjectMetadata metadata = new ObjectMetadata();
             long excelFileSize = excelFile.length();
             metadata.setContentLength(excelFileSize);
             s3client.putObject(bucketName, tmpMinioPath, inputStream, metadata);
-            logger.error("Excel File Uploaded Successfully to Temporary MinIO Path");
 
             String fileSize = String.valueOf(excelFileSize);
             jobContext.setParameters("FILE_SIZE", fileSize);
-            logger.error("FILE_SIZE '{}' Set to Job Context Successfully!", fileSize);
 
-            logger.error("Step 5: Copying to Final MinIO Path: {}", finalMinioPath);
+            if (IS_LOG_ENABLED) {
+                logger.info("Excel File Uploaded Successfully to Temporary MinIO Path");
+                logger.info("FILE_SIZE '{}' Set to Job Context Successfully!", fileSize);
+                logger.info("Step 5: Copying to Final MinIO Path: {}", finalMinioPath);
+            }
+
             s3client.copyObject(bucketName, tmpMinioPath, bucketName, finalMinioPath);
-            logger.error("Excel File Copied Successfully to Final Path");
+            if (IS_LOG_ENABLED) {
+                logger.info("Excel File Copied Successfully to Final Path");
+            }
 
             if (!s3client.doesObjectExist(bucketName, finalMinioPath)) {
                 throw new RuntimeException("Failed to Verify Final File Exists: " + finalMinioPath);
             }
 
-            logger.error("Step 6: Deleting Temporary Files from MinIO");
+            if (IS_LOG_ENABLED) {
+                logger.info("Step 6: Deleting Temporary Files from MinIO");
+            }
+
             s3client.deleteObject(bucketName, tmpMinioPath);
-            logger.error("Temporary MinIO Objects Deleted Successfully");
 
-            logger.error("Step 7: Cleaning Up Local Temporary Files");
+            if (IS_LOG_ENABLED) {
+                logger.info("Temporary MinIO Objects Deleted Successfully");
+                logger.info("Step 7: Cleaning Up Local Temporary Files");
+            }
             FileUtils.deleteDirectory(new File(tmpDirPath));
-            logger.error("Local Temporary Files Deleted Successfully");
-
-            logger.error("Excel Report Uploaded Successfully!");
-            logger.error("Final file location: {}/{}", bucketName, finalMinioPath);
+            if (IS_LOG_ENABLED) {
+                logger.info("Local Temporary Files Deleted Successfully");
+                logger.info("Excel Report Uploaded Successfully!");
+                logger.info("Final file location: {}/{}", bucketName, finalMinioPath);
+            }
 
         } catch (Exception e) {
             logger.error("Error in Processing Excel Report, Message: {}, Error: {}", e.getMessage(), e);

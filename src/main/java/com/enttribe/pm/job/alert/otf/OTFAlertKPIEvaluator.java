@@ -8,7 +8,6 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.GregorianCalendar;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +15,6 @@ import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.commons.lang.StringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.api.java.UDF4;
@@ -29,9 +27,7 @@ import org.slf4j.LoggerFactory;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.gson.Gson;
 import com.enttribe.commons.Symbol;
-import com.enttribe.commons.lang.MapUtils;
 import com.enttribe.sparkrunner.context.JobContext;
 import com.enttribe.sparkrunner.udf.AbstractUDF;
 
@@ -44,6 +40,7 @@ public class OTFAlertKPIEvaluator implements
 		AbstractUDF {
 
 	private static Logger logger = LoggerFactory.getLogger(OTFAlertKPIEvaluator.class);
+	private static final boolean IS_LOG_ENABLED = true;
 
 	private static final long serialVersionUID = 1L;
 	private static Map<String, Map<String, String>> kpiFormulaMap = null;
@@ -53,12 +50,13 @@ public class OTFAlertKPIEvaluator implements
 		super();
 	}
 
-	@SuppressWarnings("unchecked")
 	@Override
 	public Row call(String finalKey, scala.collection.immutable.Map<String, String> rawCounter,
 			scala.collection.immutable.Map<String, String> metaData, String frequency) throws Exception {
 
-		logger.info("KPI Evaluator Execution Started!");
+		if (IS_LOG_ENABLED) {
+			logger.info("KPI Evaluator Execution Started With Frequency: {}", frequency);
+		}
 
 		java.util.Map<String, String> rawCountersMap = CollectionConverters.MapHasAsJava(rawCounter).asJava();
 		java.util.Map<String, String> metaDataMap = new THashMap<>();
@@ -66,34 +64,49 @@ public class OTFAlertKPIEvaluator implements
 			metaDataMap = new THashMap<>(CollectionConverters.MapHasAsJava(metaData).asJava());
 		}
 
-		logger.info("Received Raw Counters Map: {} And Meta Data Map: {}", rawCountersMap, metaDataMap);
+		if (IS_LOG_ENABLED) {
+			logger.info("Raw Counters Map: {}", rawCountersMap);
+			logger.info("Meta Data Map: {}", metaDataMap);
+		}
 
 		Map<String, String> kpiMap = new THashMap<>();
 		Map<String, String> exceptionalKpiMap = new THashMap<>();
 
-		String KPI_FORMULA_MAP_JSON = jobContext.getParameter("KPI_FORMULA_MAP");
+		String START_INDEX = jobContext.getParameter("START_INDEX");
+
+		String KPI_FORMULA_MAP_JSON = jobContext.getParameter("KPI_FORMULA_MAP" + START_INDEX);
 		kpiFormulaMap = new ObjectMapper().readValue(KPI_FORMULA_MAP_JSON,
 				new TypeReference<Map<String, Map<String, String>>>() {
 				});
 
-		logger.info("KPI Formula Final Map: {}", kpiFormulaMap);
+		if (IS_LOG_ENABLED) {
+			logger.info("KPI Formula Final Map: {}", kpiFormulaMap);
+		}
 
 		if (kpiFormulaMap != null) {
 			Iterator<Map.Entry<String, Map<String, String>>> kpiFormula = kpiFormulaMap.entrySet().iterator();
 			while (kpiFormula.hasNext()) {
 				int count = 0;
 				Map.Entry<String, Map<String, String>> formula = kpiFormula.next();
-				logger.info("Formula: {}", formula);
+				if (IS_LOG_ENABLED) {
+					logger.info("Formula: {}", formula);
+				}
 				if (formula.getKey() != null && formula.getKey().contains("##")) {
 
 					String formulaKey = formula.getKey();
 					Map<String, String> formulaValue = formula.getValue();
-					logger.info("Formula Key: {} And Formula Value: {}", formulaKey, formulaValue);
+					if (IS_LOG_ENABLED) {
+						logger.info("Formula Key: {}", formulaKey);
+						logger.info("Formula Value: {}", formulaValue);
+					}
 
 					String formulaId = StringUtils.substringBeforeLast(formulaKey, "##");
 					String formulaString = StringUtils.substringAfterLast(formulaKey, "##");
 
-					logger.info("Formula ID: {} And Formula String: {}", formulaId, formulaString);
+					if (IS_LOG_ENABLED) {
+						logger.info("Formula ID: {}", formulaId);
+						logger.info("Formula String: {}", formulaString);
+					}
 
 					String timeShiftKey = StringUtils
 							.substringBefore(StringUtils.substringAfter(formulaId, ").TimeShift("), ")");
@@ -101,44 +114,69 @@ public class OTFAlertKPIEvaluator implements
 						timeShiftKey = "ts" + timeShiftKey;
 					}
 
-					logger.info("Time Shift Key: {}", timeShiftKey);
-
 					Map<String, String> formulaCounterMap = formulaValue;
-					logger.info("Formula Counter Map: {}", formulaCounterMap);
+
+					if (IS_LOG_ENABLED) {
+						logger.info("Time Shift Key: {}", timeShiftKey);
+						logger.info("Formula Counter Map: {}", formulaCounterMap);
+					}
 
 					for (Entry<String, String> formulaCounterEntry : formulaCounterMap.entrySet()) {
 						String counterId = formulaCounterEntry.getKey();
-						logger.info("Counter ID: {}", counterId);
+						if (IS_LOG_ENABLED) {
+							logger.info("Counter ID: {}", counterId);
+						}
 						try {
 							if (!counterId.equalsIgnoreCase("")) {
 								String counterKey = formulaCounterEntry.getValue();
-								logger.info("Counter Key: {}", counterKey);
+								if (IS_LOG_ENABLED) {
+									logger.info("Counter Key: {}", counterKey);
+								}
 
 								String counterIdWithTimeShift = counterId + timeShiftKey;
-								logger.info("Counter ID With Time Shift: {}", counterIdWithTimeShift);
+								if (IS_LOG_ENABLED) {
+									logger.info("Counter ID With Time Shift: {}", counterIdWithTimeShift);
+								}
 
 								if (rawCountersMap.get(counterIdWithTimeShift) != null) {
 
-									logger.info("Counter ID With Time Shift: {}", counterIdWithTimeShift);
+									if (IS_LOG_ENABLED) {
+										logger.info("Counter ID With Time Shift: {}", counterIdWithTimeShift);
+									}
 
 									String value = String.valueOf(rawCountersMap.get(counterIdWithTimeShift));
-									logger.info("Value: {}", value);
+									if (IS_LOG_ENABLED) {
+										logger.info("Value: {}", value);
+									}
+
 									if (!StringUtils.isEmpty(value)) {
 
-										logger.info("Creating Expression: {}", formulaString);
+										if (IS_LOG_ENABLED) {
+											logger.info("Creating Expression: {}", formulaString);
+										}
+
 										try {
 											formulaString = createExpression(formulaString, counterKey, value);
-											logger.info("Formula String: {}", formulaString);
+											if (IS_LOG_ENABLED) {
+												logger.info("Formula String: {}", formulaString);
+											}
 										} catch (Exception e) {
 											logger.error("Exception: {}", e.getMessage());
 										}
 									} else {
-										logger.info("Value is Empty: {}", value);
+										if (IS_LOG_ENABLED) {
+											logger.info("Value is Empty: {}", value);
+										}
 									}
 								} else {
-									logger.info("Counter ID With Time Shift Not Found: {}", counterIdWithTimeShift);
+									if (IS_LOG_ENABLED) {
+										logger.info("Counter ID With Time Shift Not Found: {}", counterIdWithTimeShift);
+									}
 									formulaString = createNVLExpression(formulaString, counterKey);
-									logger.info("Formula String: {}", formulaString);
+									if (IS_LOG_ENABLED) {
+										logger.info("Formula String: {}", formulaString);
+									}
+
 								}
 							}
 						} catch (Exception e) {
@@ -149,15 +187,34 @@ public class OTFAlertKPIEvaluator implements
 					}
 					if (count < 1) {
 
-						logger.info("Replacing Meta Detail: {}", formulaString);
-						logger.info("Meta Data Map: {}", metaDataMap);
+						if (IS_LOG_ENABLED) {
+							logger.info("Replacing Meta Detail: {}", formulaString);
+							logger.info("Meta Data Map: {}", metaDataMap);
+						}
 						try {
 							formulaString = replaceMetaDetail(formulaString, metaDataMap);
-							logger.info("Replaced Meta Detail: {}", formulaString);
+							if (IS_LOG_ENABLED) {
+								logger.info("Final Replaced Meta Detail: {}", formulaString);
+							}
+
+							// Defer expressions that still reference KPI placeholders
+							if (formulaString.contains("KPI#")) {
+								if (formulaId.contains(",")) {
+									for (String kpiId : formulaId.split(",")) {
+										exceptionalKpiMap.put(String.valueOf(kpiId), formulaString);
+									}
+								} else {
+									exceptionalKpiMap.put(String.valueOf(formulaId), formulaString);
+								}
+								continue;
+							}
+
 							com.enttribe.sparkrunner.util.Expression expression = new com.enttribe.sparkrunner.util.Expression(
 									formulaString, true);
 							String kpiValue = expression.eval();
-							logger.info("Calculated KPI Value: {}", kpiValue);
+							if (IS_LOG_ENABLED) {
+								logger.info("Calculated KPI Code: {}, KPI Value: {}", formulaId, kpiValue);
+							}
 
 							if (formulaId.contains(",")) {
 								for (String kpiId : formulaId.split(",")) {
@@ -168,7 +225,8 @@ public class OTFAlertKPIEvaluator implements
 							}
 
 						} catch (Exception e) {
-							logger.error("Exception Occured While Replacing Meta Detail: {}", e.getMessage());
+							logger.error("Exception Occured While Replacing Meta Detail: {}",
+									e.getMessage());
 							if ((e.getMessage() != null || e.getMessage().equalsIgnoreCase("Division by zero!"))
 									&& !e.getMessage().contains("Unknown operator")) {
 								for (String kpiId : formulaId.split(",")) {
@@ -192,21 +250,25 @@ public class OTFAlertKPIEvaluator implements
 
 						}
 					} else {
-						logger.info("Count is not less than 1: {}", count);
-						logger.info("Formula String: {}", formulaString);
+						if (IS_LOG_ENABLED) {
+							logger.info("Count is not less than 1: {}", count);
+							logger.info("Formula String: {}", formulaString);
+						}
 					}
 				}
 			}
 		}
 		if (finalKey != null && !finalKey.isEmpty()) {
-			logger.info("Setting Date Time For Final Key: {}", finalKey);
+			if (IS_LOG_ENABLED) {
+				logger.info("Setting Date Time For Final Key: {}", finalKey);
+			}
 			setDateTime(finalKey, metaDataMap, frequency);
 		}
 		List<String> kpiList = new ArrayList<>();
 		List<String> counterIdList = new ArrayList<>();
 
-		String KPI_CODES = jobContext.getParameter("KPI_CODES");
-		String COUNTER_IDS = jobContext.getParameter("COUNTER_IDS");
+		String KPI_CODES = jobContext.getParameter("KPI_CODES" + START_INDEX);
+		String COUNTER_IDS = jobContext.getParameter("COUNTER_IDS" + START_INDEX);
 
 		if (KPI_CODES != null && !KPI_CODES.isEmpty()) {
 			kpiList = Arrays.asList(KPI_CODES.split(","));
@@ -221,26 +283,192 @@ public class OTFAlertKPIEvaluator implements
 				"NAM");
 
 		kpiMap = getUpdateValueByKpi(exceptionalKpiMap, kpiMap);
-		String genericKPIWiseFormulaDesc = jobContext.getParameter("genericKPIWiseFormulaDesc");
-		logger.info("Generic KPI Wise Formula Desc: {}", genericKPIWiseFormulaDesc);
-		Map<String, String> genericKPIWiseFormulaDescs = new Gson().fromJson(genericKPIWiseFormulaDesc, Map.class);
-		if (MapUtils.isNotEmpty(genericKPIWiseFormulaDescs)) {
-			kpiMap = genericKpiEvaluator(genericKPIWiseFormulaDescs, kpiMap, metaDataMap);
-		}
+
+		// String genericKPIWiseFormulaDesc =
+		// jobContext.getParameter("GENERIC_KPI_WISE_FORMULA_DESC");
+		// logger.info("🚀 Generic KPI Wise Formula Desc: {}",
+		// genericKPIWiseFormulaDesc);
+		// Map<String, String> genericKPIWiseFormulaDescs = new
+		// Gson().fromJson(genericKPIWiseFormulaDesc, Map.class);
+		// if (MapUtils.isNotEmpty(genericKPIWiseFormulaDescs)) {
+		// kpiMap = genericKpiEvaluator(genericKPIWiseFormulaDescs, kpiMap,
+		// metaDataMap);
+		// }
 
 		// Initialize the result array
 		Object[] resultArray = initializeObjectArray(kpiList, counterIdList, columnsToSet);
-		logger.info("Array Size: {}, Columns To Set Size: {}, Kpi List Size: {}, Counter Id List Size: {}",
-				resultArray.length, columnsToSet.size(), kpiList.size(), counterIdList.size());
+		if (IS_LOG_ENABLED) {
+			logger.info("Array Size: {}, Columns To Set Size: {}, Kpi List Size: {}, Counter Id List Size: {}",
+					resultArray.length, columnsToSet.size(), kpiList.size(), counterIdList.size());
+		}
 
 		// Initialize the result array index
 		int arrayIndex = 0;
+		String startIndex = jobContext.getParameter("START_INDEX");
+		String filterLevel = jobContext.getParameter("FILTER_LEVEL" + startIndex);
+		if (IS_LOG_ENABLED) {
+			logger.info("KPI Evaluator Filter Level: {}", filterLevel);
+		}
 		initializeResultArray(metaDataMap, kpiMap, columnsToSet, resultArray, arrayIndex, rawCountersMap, kpiList,
-				counterIdList);
+				counterIdList, filterLevel);
 
-		logger.info("KPI Evaluator Result: {}", Arrays.toString(resultArray));
+		if (IS_LOG_ENABLED) {
+			logger.info("KPI Evaluator Result: {}", Arrays.toString(resultArray));
+		}
 
 		return RowFactory.create(resultArray);
+	}
+
+	private static Map<String, String> updateMetadebugMap(Map<String, String> metadebug, String removeKey) {
+		String[] removeKeyArray = removeKey.split(Symbol.HASH_STRING);
+		for (String key : removeKeyArray) {
+			metadebug.remove(key);
+		}
+		return metadebug;
+	}
+
+	private Map<String, String> updateMetaDataForAggregation(Map<String, String> metaDataMap, JobContext jobContext) {
+		String aggregationLevel = jobContext.getParameter("AGGREGATION_LEVEL");
+		String nodeValue = "INDIVIDUAL";
+		String reportLevel = "NOT_NEEDED";
+		String technology = jobContext.getParameter("TECHNOLOGY");
+		metaDataMap.put("T", technology);
+		try {
+			switch (aggregationLevel) {
+				/*
+				 * CELL LEVEL
+				 */
+				case "ENB_NEID":
+				case "ENB":
+
+					updateMetadebugMap(metaDataMap, "CEL#NEID#NET#EGID");
+					metaDataMap.put("NAM", metaDataMap.get("ENB"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+
+				/*
+				 * NODE LEVEL 02
+				 */
+
+				case "H2_NEID":
+				case "H2":
+
+					updateMetadebugMap(metaDataMap, "CEL#NEID#ENB#ENB_NEID#NET#EGID#SC#NEL#SFID");
+					metaDataMap.put("NAM", metaDataMap.get("H2"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+
+				/*
+				 * NODE LEVEL 01
+				 */
+
+				case "H1_NEID":
+				case "H1":
+
+					updateMetadebugMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#EGID#SC#NEL#SFID#OG");
+					metaDataMap.put("NAM", metaDataMap.get("H1"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+
+				/*
+				 * GROUP CENTER LEVEL
+				 */
+
+				case "GC":
+					updateMetadebugMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#SC#NEL#SFID");
+					break;
+
+				/*
+				 * L4 LEVEL
+				 */
+
+				case "L4":
+					updateMetadebugMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#GC#SC#OG#DOG#NEL#SFID");
+					metaDataMap.put("NAM", metaDataMap.get("L4"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+
+				/*
+				 * L3 LEVEL
+				 */
+
+				case "L3":
+					updateMetadebugMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#GC#L4#DL4#SC#OG#DOG#NEL#SFID");
+					metaDataMap.put("NAM", metaDataMap.get("L3"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+
+				/*
+				 * L2 LEVEL
+				 */
+
+				case "L2":
+					updateMetadebugMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#GC#L4#DL4#L3#DL3#SC#OG#DOG#NEL#SFID");
+					metaDataMap.put("NAM", metaDataMap.get("L2"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+
+				/*
+				 * L1 LEVEL
+				 */
+
+				case "L1":
+					updateMetadebugMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#GC#L4#DL4#L3#DL3#DL2#L2#SC#OG#DOG#NEL#SFID#NEID#CEL#PMEMSID#ENB#VNF#VNFNEID");
+					metaDataMap.put("NAM", metaDataMap.get("L1"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+					break;
+
+				/*
+				 * L0 LEVEL
+				 */
+
+				case "L0":
+
+					updateMetadebugMap(metaDataMap,
+							"CEL#NEID#H2#H2_NEID#ENB#ENB_NEID#NET#H1#H1_NEID#EID#EGID#GC#L4#DL4#L3#DL3#DL2#L2#DL1#L1#SC#OG#DOG#NEL#SFID#NEID#CEL#PMEMSID#ENB#VNF#VNFNEID");
+					metaDataMap.put("NAM", metaDataMap.get("L0"));
+					metaDataMap.put("L0", metaDataMap.remove("L0"));
+					metaDataMap.put("DL0", metaDataMap.remove("L0"));
+					metaDataMap.put("BND", "ALL");
+					metaDataMap.put("M33", "ALL");
+					metaDataMap.put("NS", "ALL");
+
+					/*
+					 * CUSTOM LEVEL
+					 */
+
+					if (reportLevel.equalsIgnoreCase("CUSTOM") && !nodeValue.equalsIgnoreCase("INDIVIDUAL")) {
+						metaDataMap.put("NAM", "CUSTOM");
+						metaDataMap.put("L0", "CUSTOM");
+						metaDataMap.put("L1", "CUSTOM");
+						metaDataMap.put("DL1", "CUSTOM");
+					}
+					break;
+			}
+		} catch (Exception e) {
+			logger.error("Exception Occured While Removing Columns From Meta Data Map: {}", e.getMessage());
+		}
+		return metaDataMap;
 	}
 
 	/**
@@ -277,6 +505,12 @@ public class OTFAlertKPIEvaluator implements
 	 * @return Formula string with placeholders replaced by actual values
 	 */
 	private String replaceMetaDetail(String formulaeString, Map<String, String> metaMap) {
+
+		if (IS_LOG_ENABLED) {
+			logger.info("@@@@@ Replacing Meta Detail: {}", formulaeString);
+			logger.info("@@@@@ Meta Map: {}", metaMap);
+		}
+
 		if (formulaeString.contains("#$") || formulaeString.contains("(EQUALS(#")
 				|| formulaeString.contains("(NOT_EQUALS(#)") || formulaeString.contains("LEFT(")
 				|| formulaeString.contains("RIGHT(")) {
@@ -303,6 +537,10 @@ public class OTFAlertKPIEvaluator implements
 			formulaeString = formulaeString.replace("\\\"", "'").replace("'", "\"");
 		}
 
+		if (IS_LOG_ENABLED) {
+			logger.info("@@@@@ Updated Formula String: {}", formulaeString);
+		}
+
 		return formulaeString;
 	}
 
@@ -317,38 +555,42 @@ public class OTFAlertKPIEvaluator implements
 	 *                                  substitution in expressions
 	 * @return Updated KPI values with newly evaluated KPI results
 	 */
-	private Map<String, String> genericKpiEvaluator(Map<String, String> genericKPIWiseFormulaDesc,
-			Map<String, String> kpiValues,
-			Map<String, String> metaDataMap) {
-		Map<String, String> exceptionalKpiMap = new HashMap<>();
+	// private Map<String, String> genericKpiEvaluator(Map<String, String>
+	// genericKPIWiseFormulaDesc,
+	// Map<String, String> kpiValues,
+	// Map<String, String> metaDataMap) {
+	// Map<String, String> exceptionalKpiMap = new HashMap<>();
 
-		for (Map.Entry<String, String> entry : genericKPIWiseFormulaDesc.entrySet()) {
-			String kpiCode = entry.getKey();
-			String formulaDesc = replaceFormulaDescWithValue(kpiValues, entry.getValue());
+	// for (Map.Entry<String, String> entry : genericKPIWiseFormulaDesc.entrySet())
+	// {
+	// String kpiCode = entry.getKey();
+	// String formulaDesc = replaceFormulaDescWithValue(kpiValues,
+	// entry.getValue());
 
-			try {
-				formulaDesc = replaceMetaDetail(formulaDesc, metaDataMap);
-				com.enttribe.sparkrunner.util.Expression expression = new com.enttribe.sparkrunner.util.Expression(
-						formulaDesc, true);
-				double kpiValue = Double.parseDouble(expression.eval());
-				updateValueMap(kpiValues, kpiCode, kpiValue);
-			} catch (Exception e) {
-				String message = e.getMessage();
-				if ((message != null && message.equalsIgnoreCase("Division by zero!"))
-						&& !message.contains("Unknown operator")) {
-					updateValueMap(kpiValues, kpiCode, Double.NaN);
-				} else {
-					exceptionalKpiMap.put(kpiCode, formulaDesc);
-				}
-			}
-		}
+	// try {
+	// formulaDesc = replaceMetaDetail(formulaDesc, metaDataMap);
+	// com.enttribe.sparkrunner.util.Expression expression = new
+	// com.enttribe.sparkrunner.util.Expression(
+	// formulaDesc, true);
+	// double kpiValue = Double.parseDouble(expression.eval());
+	// updateValueMap(kpiValues, kpiCode, kpiValue);
+	// } catch (Exception e) {
+	// String message = e.getMessage();
+	// if ((message != null && message.equalsIgnoreCase("Division by zero!"))
+	// && !message.contains("Unknown operator")) {
+	// updateValueMap(kpiValues, kpiCode, Double.NaN);
+	// } else {
+	// exceptionalKpiMap.put(kpiCode, formulaDesc);
+	// }
+	// }
+	// }
 
-		if (!exceptionalKpiMap.isEmpty()) {
-			kpiValues = getUpdateValueByKpi(kpiValues, exceptionalKpiMap);
-		}
+	// if (!exceptionalKpiMap.isEmpty()) {
+	// kpiValues = getUpdateValueByKpi(kpiValues, exceptionalKpiMap);
+	// }
 
-		return kpiValues;
-	}
+	// return kpiValues;
+	// }
 
 	/**
 	 * Replaces KPI placeholders in the formula description with actual KPI values.
@@ -357,15 +599,17 @@ public class OTFAlertKPIEvaluator implements
 	 * @param formulaDesc Formula string containing KPI#ID placeholders
 	 * @return Updated formula string with KPI values substituted
 	 */
-	private String replaceFormulaDescWithValue(Map<String, String> kpiValues, String formulaDesc) {
-		for (Map.Entry<String, String> kpiValue : kpiValues.entrySet()) {
-			String placeholder = "KPI#" + kpiValue.getKey();
-			if (formulaDesc.contains(placeholder)) {
-				formulaDesc = StringUtils.replace(formulaDesc, placeholder, kpiValue.getValue());
-			}
-		}
-		return formulaDesc.replace("{", "(").replace("}", ")");
-	}
+	// private String replaceFormulaDescWithValue(Map<String, String> kpiValues,
+	// String formulaDesc) {
+	// for (Map.Entry<String, String> kpiValue : kpiValues.entrySet()) {
+	// String placeholder = "KPI#" + kpiValue.getKey();
+	// if (formulaDesc.contains(placeholder)) {
+	// formulaDesc = StringUtils.replace(formulaDesc, placeholder,
+	// kpiValue.getValue());
+	// }
+	// }
+	// return formulaDesc.replace("{", "(").replace("}", ")");
+	// }
 
 	/**
 	 * Updates the kpiMap by assigning the specified kpiValue to each KPI ID in the
@@ -376,21 +620,22 @@ public class OTFAlertKPIEvaluator implements
 	 * @param kpiValue  The value to assign to each KPI ID
 	 * @return Updated KPI map with new values for the specified KPI IDs
 	 */
-	private Map<String, String> updateValueMap(Map<String, String> kpiMap, String formulaId, double kpiValue) {
-		for (String kpiId : formulaId.split(",")) {
-			kpiMap.put(kpiId, String.format("%f", kpiValue));
-		}
-		return kpiMap;
-	}
+	// private Map<String, String> updateValueMap(Map<String, String> kpiMap, String
+	// formulaId, double kpiValue) {
+	// for (String kpiId : formulaId.split(",")) {
+	// kpiMap.put(kpiId, String.format("%f", kpiValue));
+	// }
+	// return kpiMap;
+	// }
 
 	/**
-	 * Sets BI-related metadata columns (DATE, TIME, DL1) in the given metaInfo map
+	 * Sets BI-related metadata columns (DATE, TIME, DL1) in the given metadebug map
 	 * based on frequency and key.
 	 *
 	 * @param finalKey  Unique key containing the timestamp
-	 * @param metaInfo  Map to populate with metadata
+	 * @param metadebug Map to populate with metadata
 	 * @param frequency Data frequency (e.g., "DAILY", "HOURLY", etc.)
-	 * @return Updated metaInfo map with BI columns
+	 * @return Updated metadebug map with BI columns
 	 * @throws ParseException if date parsing fails
 	 */
 	private Map<String, String> setDateTime(String finalKey, Map<String, String> metaInfo,
@@ -491,7 +736,9 @@ public class OTFAlertKPIEvaluator implements
 				return Symbol.HYPHEN_STRING;
 			}
 
-			logger.info("Raw counter value for ID {}: {}", counterId, raw);
+			if (IS_LOG_ENABLED) {
+				logger.info("Raw counter value for ID {}: {}", counterId, raw);
+			}
 
 			double parsedValue;
 
@@ -511,8 +758,7 @@ public class OTFAlertKPIEvaluator implements
 			return new DecimalFormat("##.####").format(parsedValue);
 
 		} catch (Exception e) {
-			logger.error("Exception while parsing counter [{}]: {}", counterId,
-					ExceptionUtils.getStackTrace(e));
+			logger.error("Exception while parsing counter [{}]: {}", counterId, e.getMessage());
 			return Symbol.HYPHEN_STRING;
 		}
 	}
@@ -539,14 +785,12 @@ public class OTFAlertKPIEvaluator implements
 			int arrayIndex,
 			Map<String, String> rawCountersMap,
 			List<String> kpiIds,
-			List<String> counterIdList) {
+			List<String> counterIdList,
+			String filterLevel) {
 
-		logger.info("Starting initializeResultArray with arrayIndex: {}", arrayIndex);
-
-		String startIndex = jobContext.getParameter("START_INDEX");
-		logger.info("Start Index: {}", startIndex);
-		String filterLevel = jobContext.getParameter("FILTER_LEVEL" + startIndex);
-		logger.info("Filter Level: {}", filterLevel);
+		if (IS_LOG_ENABLED) {
+			logger.info("Starting initializeResultArray with arrayIndex: {}", arrayIndex);
+		}
 
 		for (String column : columnsToSet) {
 			String value = getValue(metaMap, column);
@@ -566,23 +810,33 @@ public class OTFAlertKPIEvaluator implements
 			resultArray[arrayIndex++] = value;
 		}
 
-		logger.info("After meta columns, arrayIndex: {}", arrayIndex);
+		if (IS_LOG_ENABLED) {
+			logger.info("After meta columns, arrayIndex: {}", arrayIndex);
+		}
 
 		for (String kpiId : kpiIds) {
 			String kpiValue = getKPIValueAsDouble(kpiMap, kpiId);
-			logger.info("Adding KPI column: {}, Value: {}", kpiId, kpiValue);
+			if (IS_LOG_ENABLED) {
+				logger.info("Adding KPI column: {}, Value: {}", kpiId, kpiValue);
+			}
 			resultArray[arrayIndex++] = kpiValue;
 		}
 
-		logger.info("After KPI columns, arrayIndex: {}", arrayIndex);
+		if (IS_LOG_ENABLED) {
+			logger.info("After KPI columns, arrayIndex: {}", arrayIndex);
+		}
 
 		for (String counterId : counterIdList) {
 			String counterValue = getCounterData(rawCountersMap, counterId);
-			logger.info("Adding counter column: {}, Value: {}", counterId, counterValue);
+			if (IS_LOG_ENABLED) {
+				logger.info("Adding counter column: {}, Value: {}", counterId, counterValue);
+			}
 			resultArray[arrayIndex++] = counterValue;
 		}
 
-		logger.info("After counter columns, arrayIndex: {}", arrayIndex);
+		if (IS_LOG_ENABLED) {
+			logger.info("After counter columns, arrayIndex: {}", arrayIndex);
+		}
 
 		return resultArray;
 	}
@@ -646,6 +900,12 @@ public class OTFAlertKPIEvaluator implements
 	 * @return Updated formula string with substitutions
 	 */
 	private String createExpression(String formulaString, String counterKey, String value) {
+		if (IS_LOG_ENABLED) {
+			logger.info("Creating Expression: {}", formulaString);
+			logger.info("Counter Key: {}", counterKey);
+			logger.info("Value: {}", value);
+		}
+
 		String replaceStr3Bracket = "NVL(((" + counterKey + ")),";
 		String replaceStr2Bracket = "NVL((" + counterKey + "),";
 
@@ -666,6 +926,9 @@ public class OTFAlertKPIEvaluator implements
 		}
 
 		formulaString = StringUtils.replace(formulaString, counterKey, value);
+		if (IS_LOG_ENABLED) {
+			logger.info("Updated Formula String: {}", formulaString);
+		}
 		return formulaString;
 	}
 
@@ -921,7 +1184,7 @@ public class OTFAlertKPIEvaluator implements
 	/**
 	 * Returns the name of the UDF as recognized by Spark SQL.
 	 * 
-	 * @return the name of the UDF, which is "OTFAlertKPIEvaluator"
+	 * @return the name of the UDF, which is "KPIEvaluator"
 	 */
 	@Override
 	public String getName() {
@@ -944,8 +1207,9 @@ public class OTFAlertKPIEvaluator implements
 		List<String> kpiList = new ArrayList<>();
 		List<String> counterIdList = new ArrayList<>();
 
-		String KPI_CODES = jobContext.getParameter("KPI_CODES");
-		String COUNTER_IDS = jobContext.getParameter("COUNTER_IDS");
+		String START_INDEX = jobContext.getParameter("START_INDEX");
+		String KPI_CODES = jobContext.getParameter("KPI_CODES" + START_INDEX);
+		String COUNTER_IDS = jobContext.getParameter("COUNTER_IDS" + START_INDEX);
 
 		if (KPI_CODES != null && !KPI_CODES.isEmpty()) {
 			kpiList = Arrays.asList(KPI_CODES.split(","));

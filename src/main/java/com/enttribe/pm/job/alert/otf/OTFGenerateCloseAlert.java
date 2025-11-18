@@ -72,6 +72,9 @@ public class OTFGenerateCloseAlert extends Processor {
             return this.dataFrame;
         }
 
+        this.dataFrame.show();
+        logger.info("+++++++++++++++++++++[BREACHED DATA]+++++++++++++++++++++");
+
         logger.info("OTFGenerateCloseAlert Execution Started!");
 
         Dataset<Row> breachedDF = this.dataFrame;
@@ -182,6 +185,19 @@ public class OTFGenerateCloseAlert extends Processor {
             alarmWrapper.setGeographyL3Name(geographyL3Name);
             alarmWrapper.setGeographyL4Name(geographyL4Name);
             alarmWrapper.setNeCategory(entityType);
+
+            if (entityId.equalsIgnoreCase("Custom")) {
+                String cellListStr = nodeAndAggregationDetailsMap.get("cellsList");
+                cellListStr = cellListStr.replace("[", "").replace("]", "");
+                String[] cellList = cellListStr.split(",");
+
+                String cellPipeSeparatedList = String.join("|", cellList);
+                String moreAdditionalDetail = ", Custom Nodes: " + cellPipeSeparatedList;
+                String combinedDetail = alarmWrapper.getAdditionalDetail() + moreAdditionalDetail;
+                String finalAdditionalDetail = combinedDetail.length() > 500 ? combinedDetail.substring(0, 500)
+                        : combinedDetail;
+                alarmWrapper.setAdditionalDetail(finalAdditionalDetail);
+            }
 
             logger.info("Alarm Wrapper: {}", alarmWrapper.toString());
             String kafkaBroker = jobContext.getParameter("SPARK_KAFKA_BROKER_ANSIBLE");

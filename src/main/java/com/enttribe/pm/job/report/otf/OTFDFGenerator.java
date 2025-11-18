@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory;
 import com.enttribe.sparkrunner.context.JobContext;
 import com.enttribe.sparkrunner.processors.Processor;
 
-import org.apache.poi.hpsf.Array;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.types.DataTypes;
@@ -23,32 +22,37 @@ import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 
+import static org.apache.spark.sql.functions.*;
+
 public class OTFDFGenerator extends Processor {
 
     private static Logger logger = LoggerFactory.getLogger(OTFDFGenerator.class);
+    private static final boolean IS_LOG_ENABLED = true;
 
     public OTFDFGenerator() {
         super();
-        logger.debug("OTFDFGenerator Constructor Called!");
     }
 
     public OTFDFGenerator(Dataset<Row> dataframe, Integer id, String processorName) {
         super(id, processorName);
-        logger.debug("OTFDFGenerator Constructor Called With Id = {} And Processor Name = {}", id, processorName);
     }
 
     @Override
     public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) throws Exception {
 
-        logger.debug("OTFDFGenerator Execution Started!");
+        if (IS_LOG_ENABLED) {
+            logger.info("OTFDFGenerator Execution Started!");
+        }
 
         Dataset<Row> dataFrame = this.dataFrame;
         if (dataFrame == null || dataFrame.isEmpty()) {
             return createEmptyDF(jobContext);
         }
 
-        this.dataFrame.show(5);
-        logger.error("++++++++++[KPI EVALUATOR RESULT]++++++++++");
+        if (IS_LOG_ENABLED) {
+            this.dataFrame.show(25, false);
+            logger.info("++++++++++[KPI EVALUATOR RESULT]++++++++++");
+        }
         return generateReportDF(dataFrame, jobContext);
     }
 
@@ -61,21 +65,29 @@ public class OTFDFGenerator extends Processor {
                     new TypeReference<Map<String, String>>() {
                     });
 
-            logger.debug("Meta Columns: {}", metaColumnsMap);
-
             String dynamicQuery = generateDynamicQuery(metaColumnsMap, jobContext);
-            logger.debug("Dynamic Query: {}", dynamicQuery);
+
+            if (IS_LOG_ENABLED) {
+                logger.info("Meta Columns: {}", metaColumnsMap);
+                logger.info("Dynamic Query: {}", dynamicQuery);
+            }
 
             dataFrame.createOrReplaceTempView("InputData");
             Dataset<Row> stableDataDF = jobContext.sqlctx().sql(dynamicQuery);
-            logger.debug("Stable Dataframe Created Successfully!");
+            if (IS_LOG_ENABLED) {
+                logger.info("Stable Dataframe Created Successfully!");
+            }
 
             List<String> metaColumnKeys = new ArrayList<>(metaColumnsMap.keySet());
-            logger.error("Meta Column Keys: {}", metaColumnKeys);
+            if (IS_LOG_ENABLED) {
+                logger.info("Meta Column Keys: {}", metaColumnKeys);
+            }
 
             List<String> defaultMetaColumnKeys = Arrays.asList("DT", "HR", "COUNTRY", "DL1", "DL2", "DL3", "DL4",
                     "NODENAME");
-            logger.error("Default Meta Column Keys: {}", defaultMetaColumnKeys);
+            if (IS_LOG_ENABLED) {
+                logger.info("Default Meta Column Keys: {}", defaultMetaColumnKeys);
+            }
 
             String selectedHeader = jobContext.getParameter("selectedHeader");
             selectedHeader = selectedHeader == null ? "default" : selectedHeader;
@@ -91,45 +103,349 @@ public class OTFDFGenerator extends Processor {
                         .collect(Collectors.toList());
             }
 
-            logger.error("Enrich From NE Keys: {}", enrichFromNEKeys);
+            if (IS_LOG_ENABLED) {
+                logger.info("Enrich From NE Keys: {}", enrichFromNEKeys);
+            }
 
             Dataset<Row> joinedDF = stableDataDF;
 
-            if (enrichFromNEKeys.isEmpty()) {
+            // Stop using DB enrichment; NE_META enrichment already present upstream
+            // (TRINO_NE_DF -> metaData)
+            // Use stableDataDF as-is here
                 joinedDF = stableDataDF;
-            } else {
-                logger.error("Enrich From NE Keys: {}", enrichFromNEKeys);
 
-                String domain = jobContext.getParameter("DOMAIN");
-                String vendor = jobContext.getParameter("VENDOR");
-                String technology = jobContext.getParameter("TECHNOLOGY");
+            if (IS_LOG_ENABLED) {
+                // joinedDF.show(5, false);
+                // logger.info("Joined Dataframe Shown Successfully!");
+            }
 
-                String reportLevel = jobContext.getParameter("AGGREGATION_LEVEL");
-                String neQuery = "SELECT * FROM NETWORK_ELEMENT WHERE DOMAIN = '" + domain + "' AND VENDOR = '" + vendor
-                        + "' AND TECHNOLOGY = '" + technology + "'";
-                if (reportLevel.equals("H1")) {
-                    neQuery += " AND PARENT_NE_ID_FK IS NULL AND NE_NAME IS NOT NULL";
-                } else if (reportLevel.equals("NAM")) {
-                    neQuery += " AND PARENT_NE_ID_FK IS NOT NULL AND NE_NAME IS NOT NULL";
-                } else {
-                    neQuery = "SELECT * FROM NETWORK_ELEMENT WHERE 1=0";
+            // NEW: Conditional dynamic grouping based on nemetaColumnsAggregation and selectedHeader='custom'
+            // This uses NE_META ORC enrichment and nemeta_groupColumns
+            String selectedHeaderEff = jobContext.getParameter("selectedHeader");
+            selectedHeaderEff = selectedHeaderEff == null ? "default" : selectedHeaderEff;
+            String nemetaColumnsAggregation = jobContext.getParameter("NEMETA_COLUMNS_AGGREGATION");
+            nemetaColumnsAggregation = nemetaColumnsAggregation == null ? "false" : nemetaColumnsAggregation;
+            String nemetaGroupColumns = jobContext.getParameter("NEMETA_GROUP_COLUMNS");
+            nemetaGroupColumns = nemetaGroupColumns == null ? "" : nemetaGroupColumns.trim();
+
+            // LEGACY: Conditional dynamic grouping based on customAggregation and selectedHeader (backward compatibility)
+            String customAggregation = jobContext.getParameter("CUSTOM_AGGREGATION");
+            customAggregation = customAggregation == null ? "false" : customAggregation;
+            String groupCenterKeys = jobContext.getParameter("GROUP_CENTER_KEYS");
+            groupCenterKeys = groupCenterKeys == null ? "" : groupCenterKeys.trim();
+
+            Dataset<Row> groupedOrJoined = joinedDF;
+            
+            // NEW LOGIC: Use nemetaColumnsAggregation when selectedHeader='custom'
+            boolean useNemetaAggregation = selectedHeaderEff.equalsIgnoreCase("custom") 
+                    && nemetaColumnsAggregation.equalsIgnoreCase("true") 
+                    && !nemetaGroupColumns.isEmpty();
+            
+            // LEGACY LOGIC: Use customAggregation when selectedHeader != 'default' (backward compatibility)
+            boolean useLegacyAggregation = !selectedHeaderEff.equalsIgnoreCase("default") 
+                    && customAggregation.equalsIgnoreCase("true") 
+                    && !groupCenterKeys.isEmpty();
+            
+            if (useNemetaAggregation) {
+                // Apply nemeta value filters before grouping, e.g., M10='ONAIR'
+                String nemetaFilters = jobContext.getParameter("NEMETA_GROUP_FILTERS");
+                if (nemetaFilters != null && !nemetaFilters.trim().isEmpty()) {
+                    List<String> filters = Arrays.stream(nemetaFilters.split(","))
+                            .map(String::trim)
+                            .filter(s -> !s.isEmpty())
+                            .collect(Collectors.toList());
+                    for (String f : filters) {
+                        int eqIdx = f.indexOf('=');
+                        if (eqIdx > 0) {
+                            String key = f.substring(0, eqIdx).trim();
+                            String val = f.substring(eqIdx + 1).trim();
+                            if (val.startsWith("'") && val.endsWith("'")) {
+                                val = val.substring(1, val.length() - 1);
+                            }
+                            if (!key.isEmpty() && Arrays.asList(joinedDF.columns()).contains(key)) {
+                                joinedDF = joinedDF.filter(col(key).equalTo(lit(val)));
+                            }
+                        }
+                    }
+                }
+                // NEW: Use nemeta_groupColumns for grouping
+                List<String> groupKeys = Arrays.stream(nemetaGroupColumns.split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toList());
+
+                List<String> availCols = Arrays.asList(joinedDF.columns());
+                if (IS_LOG_ENABLED) {
+                    logger.info("Available columns before grouping: {}", availCols);
+                }
+                List<String> actualGroupCols = groupKeys.stream()
+                        .filter(availCols::contains)
+                        .collect(Collectors.toList());
+
+                // Always also group by visible meta columns present in the output to avoid
+                // collapsing time/geo
+                List<String> baseGroupCols = new ArrayList<>();
+                for (String c : new String[] { "DT", "HR", "Country", "DL1", "DL2", "DL3", "DL4" }) {
+                    if (availCols.contains(c)) {
+                        baseGroupCols.add(c);
+                    }
+                }
+                // Include ALL M# columns as groupBy columns automatically
+                List<String> allMCols = new ArrayList<>();
+                for (String c : availCols) {
+                    if (c != null && c.length() > 1) {
+                        char c0 = c.charAt(0);
+                        if ((c0 == 'M' || c0 == 'm')) {
+                            boolean digits = true;
+                            for (int i = 1; i < c.length(); i++) {
+                                if (!Character.isDigit(c.charAt(i))) {
+                                    digits = false;
+                                    break;
+                                }
+                            }
+                            if (digits) {
+                                allMCols.add(c);
+                            }
+                        }
+                    }
+                }
+                // Build final group columns with order preserved and WITHOUT duplicates
+                java.util.LinkedHashSet<String> finalGroupColsSet = new java.util.LinkedHashSet<>();
+                finalGroupColsSet.addAll(baseGroupCols);
+                finalGroupColsSet.addAll(actualGroupCols);
+                finalGroupColsSet.addAll(allMCols);
+                List<String> finalGroupCols = new ArrayList<>(finalGroupColsSet);
+                if (IS_LOG_ENABLED) {
+                    logger.info("M# columns found for grouping: {}", allMCols);
+                    logger.info("Final groupBy columns: {}", finalGroupCols);
                 }
 
-                logger.error("NE Query: {}", neQuery);
+                if (!actualGroupCols.isEmpty()) {
+                    List<String> kpiIds = new ArrayList<>();
+                    List<String> counterIds = new ArrayList<>();
+                    String kpiCsv = jobContext.getParameter("KPI_CODE_COMMA_SEPARATED");
+                    String counterCsv = jobContext.getParameter("COUNTER_ID_COMMA_SEPARATED");
+                    if (kpiCsv != null) {
+                        for (String k : kpiCsv.split(",")) {
+                            if (!k.trim().isEmpty())
+                                kpiIds.add(k.trim());
+                        }
+                    }
+                    if (counterCsv != null) {
+                        for (String c : counterCsv.split(",")) {
+                            if (!c.trim().isEmpty())
+                                counterIds.add(c.trim());
+                        }
+                    }
 
-                Dataset<Row> neDF = getDataFrameFromQuery(neQuery, jobContext);
-                logger.error("NE Dataframe Shown Successfully!");
+                    List<String> metricCols = new ArrayList<>();
+                    metricCols.addAll(kpiIds);
+                    metricCols.addAll(counterIds);
 
-                joinedDF = stableDataDF.join(
-                        neDF,
-                        stableDataDF.col("NODENAME").equalTo(neDF.col("NE_NAME")),
-                        "left");
+                    // If there are no metrics to aggregate, skip grouping entirely
+                    if (metricCols.isEmpty()) {
+                        groupedOrJoined = joinedDF;
+                    } else {
 
+                        List<String> metaCandidates = new ArrayList<>(availCols);
+                        metaCandidates.removeAll(metricCols);
+
+                        // Build aggregations: first() for meta (non-group keys); avg(Double) for
+                        // metrics
+                        List<org.apache.spark.sql.Column> aggExprs = new ArrayList<>();
+                        for (String mc : metaCandidates) {
+                            // Never aggregate groupBy columns and never aggregate any M# columns
+                            boolean isGroupCol = finalGroupCols.contains(mc);
+                            boolean isMColumn = (mc.length() > 1 && (mc.charAt(0) == 'M' || mc.charAt(0) == 'm'));
+                            if (!isGroupCol && !isMColumn) {
+                                aggExprs.add(first(col(mc), true).alias(mc));
+                            }
+                        }
+                        for (String m : metricCols) {
+                            if (availCols.contains(m)) {
+                                aggExprs.add(avg(col(m).cast(DataTypes.DoubleType)).alias(m));
+                            }
+                        }
+
+                        org.apache.spark.sql.RelationalGroupedDataset rgd = joinedDF.groupBy(
+                                finalGroupCols.stream().map(org.apache.spark.sql.functions::col)
+                                        .toArray(org.apache.spark.sql.Column[]::new));
+                        Dataset<Row> aggregatedDF;
+                        if (aggExprs.isEmpty()) {
+                            // Should not happen when metricCols non-empty; safe fallback to count
+                            aggregatedDF = rgd.count().drop("count");
+                        } else {
+                            aggregatedDF = rgd.agg(aggExprs.get(0),
+                                    aggExprs.subList(1, aggExprs.size()).toArray(new org.apache.spark.sql.Column[0]));
+
+                            // Explicitly include groupBy columns in the aggregated output selection
+                            // The aggregated result already contains: groupBy columns + aggregated columns
+                            // We just need to ensure proper column order: groupBy cols first, then aggregated cols
+                            java.util.LinkedHashSet<String> selectNames = new java.util.LinkedHashSet<>();
+                            selectNames.addAll(finalGroupCols);
+                            // Add non-group meta columns that were aggregated
+                            for (String mc : metaCandidates) {
+                                boolean isGroupCol = finalGroupCols.contains(mc);
+                                boolean isMColumn = (mc.length() > 1 && (mc.charAt(0) == 'M' || mc.charAt(0) == 'm'));
+                                if (!isGroupCol && !isMColumn) {
+                                    selectNames.add(mc);
+                                }
+                            }
+                            selectNames.addAll(metricCols);
+
+                            final Dataset<Row> finalAggregatedDF = aggregatedDF;
+                            java.util.List<org.apache.spark.sql.Column> selectCols = selectNames.stream()
+                                    .filter(name -> java.util.Arrays.asList(finalAggregatedDF.columns()).contains(name))
+                                    .map(org.apache.spark.sql.functions::col)
+                                    .collect(java.util.stream.Collectors.toList());
+                            if (!selectCols.isEmpty()) {
+                                aggregatedDF = aggregatedDF.select(selectCols.toArray(new org.apache.spark.sql.Column[0]));
+                            }
+                        }
+                        groupedOrJoined = aggregatedDF;
+                    }
+                }
+            } else if (useLegacyAggregation) {
+                // LEGACY: Use group_center for grouping (backward compatibility)
+                List<String> groupKeys = Arrays.stream(groupCenterKeys.split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toList());
+
+                List<String> availCols = Arrays.asList(joinedDF.columns());
+                if (IS_LOG_ENABLED) {
+                    logger.info("Available columns before grouping (LEGACY): {}", availCols);
+                }
+                List<String> actualGroupCols = groupKeys.stream()
+                        .filter(availCols::contains)
+                        .collect(Collectors.toList());
+
+                // Always also group by visible meta columns present in the output to avoid
+                // collapsing time/geo
+                List<String> baseGroupCols = new ArrayList<>();
+                for (String c : new String[] { "DT", "HR", "Country", "DL1", "DL2", "DL3", "DL4" }) {
+                    if (availCols.contains(c)) {
+                        baseGroupCols.add(c);
+                    }
+                }
+                // Include ALL M# columns as groupBy columns automatically
+                List<String> allMCols = new ArrayList<>();
+                for (String c : availCols) {
+                    if (c != null && c.length() > 1) {
+                        char c0 = c.charAt(0);
+                        if ((c0 == 'M' || c0 == 'm')) {
+                            boolean digits = true;
+                            for (int i = 1; i < c.length(); i++) {
+                                if (!Character.isDigit(c.charAt(i))) {
+                                    digits = false;
+                                    break;
+                                }
+                            }
+                            if (digits) {
+                                allMCols.add(c);
+                            }
+                        }
+                    }
+                }
+                // Build final group columns with order preserved and WITHOUT duplicates
+                java.util.LinkedHashSet<String> finalGroupColsSet = new java.util.LinkedHashSet<>();
+                finalGroupColsSet.addAll(baseGroupCols);
+                finalGroupColsSet.addAll(actualGroupCols);
+                finalGroupColsSet.addAll(allMCols);
+                List<String> finalGroupCols = new ArrayList<>(finalGroupColsSet);
+                if (IS_LOG_ENABLED) {
+                    logger.info("M# columns found for grouping (LEGACY): {}", allMCols);
+                    logger.info("Final groupBy columns (LEGACY): {}", finalGroupCols);
+                }
+
+                if (!actualGroupCols.isEmpty()) {
+                    List<String> kpiIds = new ArrayList<>();
+                    List<String> counterIds = new ArrayList<>();
+                    String kpiCsv = jobContext.getParameter("KPI_CODE_COMMA_SEPARATED");
+                    String counterCsv = jobContext.getParameter("COUNTER_ID_COMMA_SEPARATED");
+                    if (kpiCsv != null) {
+                        for (String k : kpiCsv.split(",")) {
+                            if (!k.trim().isEmpty())
+                                kpiIds.add(k.trim());
+                        }
+                    }
+                    if (counterCsv != null) {
+                        for (String c : counterCsv.split(",")) {
+                            if (!c.trim().isEmpty())
+                                counterIds.add(c.trim());
+                        }
+                    }
+
+                    List<String> metricCols = new ArrayList<>();
+                    metricCols.addAll(kpiIds);
+                    metricCols.addAll(counterIds);
+
+                    // If there are no metrics to aggregate, skip grouping entirely
+                    if (metricCols.isEmpty()) {
+                        groupedOrJoined = joinedDF;
+                    } else {
+
+                        List<String> metaCandidates = new ArrayList<>(availCols);
+                        metaCandidates.removeAll(metricCols);
+
+                        // Build aggregations: first() for meta (non-group keys); avg(Double) for
+                        // metrics
+                        List<org.apache.spark.sql.Column> aggExprs = new ArrayList<>();
+                        for (String mc : metaCandidates) {
+                            // Never aggregate groupBy columns and never aggregate any M# columns
+                            boolean isGroupCol = finalGroupCols.contains(mc);
+                            boolean isMColumn = (mc.length() > 1 && (mc.charAt(0) == 'M' || mc.charAt(0) == 'm'));
+                            if (!isGroupCol && !isMColumn) {
+                                aggExprs.add(first(col(mc), true).alias(mc));
+                            }
+                        }
+                        for (String m : metricCols) {
+                            if (availCols.contains(m)) {
+                                aggExprs.add(avg(col(m).cast(DataTypes.DoubleType)).alias(m));
+                            }
+                        }
+
+                        org.apache.spark.sql.RelationalGroupedDataset rgd = joinedDF.groupBy(
+                                finalGroupCols.stream().map(org.apache.spark.sql.functions::col)
+                                        .toArray(org.apache.spark.sql.Column[]::new));
+                        Dataset<Row> aggregatedDF;
+                        if (aggExprs.isEmpty()) {
+                            // Should not happen when metricCols non-empty; safe fallback to count
+                            aggregatedDF = rgd.count().drop("count");
+                        } else {
+                            aggregatedDF = rgd.agg(aggExprs.get(0),
+                                    aggExprs.subList(1, aggExprs.size()).toArray(new org.apache.spark.sql.Column[0]));
+
+                            // Explicitly include groupBy columns in the aggregated output selection
+                            // The aggregated result already contains: groupBy columns + aggregated columns
+                            // We just need to ensure proper column order: groupBy cols first, then aggregated cols
+                            java.util.LinkedHashSet<String> selectNames = new java.util.LinkedHashSet<>();
+                            selectNames.addAll(finalGroupCols);
+                            // Add non-group meta columns that were aggregated
+                            for (String mc : metaCandidates) {
+                                boolean isGroupCol = finalGroupCols.contains(mc);
+                                boolean isMColumn = (mc.length() > 1 && (mc.charAt(0) == 'M' || mc.charAt(0) == 'm'));
+                                if (!isGroupCol && !isMColumn) {
+                                    selectNames.add(mc);
+                                }
+                            }
+                            selectNames.addAll(metricCols);
+
+                            final Dataset<Row> finalAggregatedDF = aggregatedDF;
+                            java.util.List<org.apache.spark.sql.Column> selectCols = selectNames.stream()
+                                    .filter(name -> java.util.Arrays.asList(finalAggregatedDF.columns()).contains(name))
+                                    .map(org.apache.spark.sql.functions::col)
+                                    .collect(java.util.stream.Collectors.toList());
+                            if (!selectCols.isEmpty()) {
+                                aggregatedDF = aggregatedDF.select(selectCols.toArray(new org.apache.spark.sql.Column[0]));
+                            }
+                        }
+                        groupedOrJoined = aggregatedDF;
+                    }
+                }
             }
-            // joinedDF.show(5, false);
-            logger.error("Joined Dataframe Shown Successfully!");
 
-            Dataset<Row> finalDF = generateFinalDataDF(joinedDF, jobContext);
+            Dataset<Row> finalDF = generateFinalDataDF(groupedOrJoined, jobContext);
 
             String frequency = jobContext.getParameter("FREQUENCY");
 
@@ -147,9 +463,6 @@ public class OTFDFGenerator extends Processor {
                 finalDF = finalDF.withColumnRenamed("DATE", "MONTH OF YEAR");
                 finalDF = finalDF.drop("TIME");
             }
-
-            // finalDF.show(5);
-            logger.debug("Final Dataframe Shown Successfully!");
 
             return finalDF;
         } catch (Exception e) {
@@ -184,9 +497,11 @@ public class OTFDFGenerator extends Processor {
             e.printStackTrace();
         }
 
-        logger.debug("Meta Columns Map: {}", metaColumnsMap);
-        logger.debug("KPI Code With KPI Name Map: {}", kpiCodeWithKpiNameMap);
-        logger.debug("Counter Id With Counter Name Map: {}", counterIdWithCounterNameMap);
+        if (IS_LOG_ENABLED) {
+            logger.info("Meta Columns Map: {}", metaColumnsMap);
+            logger.info("KPI Code With KPI Name Map: {}", kpiCodeWithKpiNameMap);
+            logger.info("Counter Id With Counter Name Map: {}", counterIdWithCounterNameMap);
+        }
 
         List<String> allColumns = new ArrayList<>();
         allColumns.addAll(metaColumnsMap.values()); // e.g. DATE, TIME, ...
@@ -206,7 +521,7 @@ public class OTFDFGenerator extends Processor {
         Map<String, String> jobContextMap = jobContext.getParameters();
 
         String FALLBACK_SPARK_PM_JDBC_DRIVER = "org.mariadb.jdbc.Driver";
-        String FALLBACK_SPARK_PM_JDBC_URL = "jdbc:mysql://mysql-nst-cluster.nstdb.svc.cluster.local:6446/PERFORMANCE_A_LAB?autoReconnect=true";
+        String FALLBACK_SPARK_PM_JDBC_URL = "jdbc:mysql://mysql-nst-cluster.nstdb.svc.cluster.local:6446/PERFORMANCE?autoReconnect=true";
         String FALLBACK_SPARK_PM_JDBC_USERNAME = "PERFORMANCE";
         String FALLBACK_SPARK_PM_JDBC_PASSWORD = "perform!123";
 
@@ -259,11 +574,19 @@ public class OTFDFGenerator extends Processor {
                     });
 
             inputDF.createOrReplaceTempView("InputData");
+            
+            if (IS_LOG_ENABLED) {
+                logger.info("InputData columns before final SELECT: {}", Arrays.asList(inputDF.columns()));
+                logger.info("metaColumnsMap: {}", metaColumnsMap);
+            }
 
             StringBuilder sql = new StringBuilder("SELECT ");
             Consumer<Map<String, String>> appendCols = (map) -> {
                 map.forEach((key, alias) -> {
                     if (key.matches("\\d+")) {
+                        sql.append("`").append(key).append("` AS `").append(alias).append("`, ");
+                    } else if (key != null && key.length() > 1 && (key.charAt(0) == 'M' || key.charAt(0) == 'm')) {
+                        // M# columns need backticks too
                         sql.append("`").append(key).append("` AS `").append(alias).append("`, ");
                     } else {
                         sql.append(key).append(" AS `").append(alias).append("`, ");
@@ -279,7 +602,9 @@ public class OTFDFGenerator extends Processor {
             }
 
             String finalSql = sql.toString() + " FROM InputData";
-            logger.debug("Final SQL: {}", finalSql);
+            if (IS_LOG_ENABLED) {
+                logger.info("Final SQL: {}", finalSql);
+            }
 
             return inputDF.sparkSession().sql(finalSql);
 
@@ -293,19 +618,25 @@ public class OTFDFGenerator extends Processor {
 
         List<String> metaColumnKeys = new ArrayList<>(
                 metaColumnsMap.keySet().stream().map(String::toUpperCase).collect(Collectors.toList()));
-        logger.debug("Meta Column Keys: {}", metaColumnKeys);
+        if (IS_LOG_ENABLED) {
+            logger.info("Meta Column Keys: {}", metaColumnKeys);
+        }
 
         List<String> defaultMetaColumnKeys = Arrays.asList("DT", "HR", "COUNTRY", "DL1", "DL2", "DL3", "DL4",
                 "NODENAME");
-        logger.debug("Default Meta Column Keys: {}", defaultMetaColumnKeys);
+        if (IS_LOG_ENABLED) {
+            logger.info("Default Meta Column Keys: {}", defaultMetaColumnKeys);
+        }
 
         List<String> enrichFromNEKeys = metaColumnKeys.stream()
                 .filter(col -> !defaultMetaColumnKeys.contains(col))
                 .collect(Collectors.toList());
 
-        logger.debug("Fields to Enrich from NE: {}", enrichFromNEKeys);
         String reportLevel = jobContext.getParameter("AGGREGATION_LEVEL");
-        logger.debug("Report Level: {}", reportLevel);
+        if (IS_LOG_ENABLED) {
+            logger.info("Fields to Enrich from NE: {}", enrichFromNEKeys);
+            logger.info("Report Level: {}", reportLevel);
+        }
 
         String dynamicQuery = "SELECT ";
 
@@ -326,25 +657,25 @@ public class OTFDFGenerator extends Processor {
                 }
             }
             case "L1":
-                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, ENTITY_NAME AS NODENAME";
+                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, ENTITY_NAME AS nodename";
                 break;
             case "L2":
-                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, UPPER(L2) AS DL2, '-' AS DL3, '-' AS DL4, ENTITY_NAME AS NODENAME";
+                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, UPPER(L2) AS DL2, '-' AS DL3, '-' AS DL4, ENTITY_NAME AS nodename";
                 break;
             case "L3":
-                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, UPPER(L2) AS DL2, UPPER(L3) AS DL3, '-' AS DL4, ENTITY_NAME AS NODENAME";
+                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, UPPER(L2) AS DL2, UPPER(L3) AS DL3, '-' AS DL4, ENTITY_NAME AS nodename";
                 break;
             case "L4":
-                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, UPPER(L2) AS DL2, UPPER(L3) AS DL3, UPPER(L4) AS DL4, ENTITY_NAME AS NODENAME";
+                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, UPPER(L2) AS DL2, UPPER(L3) AS DL3, UPPER(L4) AS DL4, ENTITY_NAME AS nodename";
                 break;
             case "H1":
-                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, UPPER(L2) AS DL2, UPPER(L3) AS DL3, UPPER(L4) AS DL4, PARENT_ENTITY_ID AS ENTITY_ID, PARENT_ENTITY_NAME AS ENTITY_NAME, ENTITY_NAME AS NODENAME";
+                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, UPPER(L2) AS DL2, UPPER(L3) AS DL3, UPPER(L4) AS DL4, PARENT_ENTITY_ID AS ENTITY_ID, PARENT_ENTITY_NAME AS ENTITY_NAME, ENTITY_NAME AS nodename";
                 break;
             case "NAM":
-                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, UPPER(L2) AS DL2, UPPER(L3) AS DL3, UPPER(L4) AS DL4, ENTITY_ID AS ENTITY_ID, ENTITY_NAME AS ENTITY_NAME, PARENT_ENTITY_ID AS PARENT_ENTITY_ID, PARENT_ENTITY_NAME AS PARENT_ENTITY_NAME, ENTITY_NAME AS NODENAME";
+                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, UPPER(L2) AS DL2, UPPER(L3) AS DL3, UPPER(L4) AS DL4, ENTITY_ID AS ENTITY_ID, ENTITY_NAME AS ENTITY_NAME, PARENT_ENTITY_ID AS PARENT_ENTITY_ID, PARENT_ENTITY_NAME AS PARENT_ENTITY_NAME, ENTITY_NAME AS nodename";
                 break;
             default:
-                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, UPPER(L2) AS DL2, UPPER(L3) AS DL3, UPPER(L4) AS DL4, UPPER(ENTITY_NAME) AS NODENAME";
+                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, UPPER(L2) AS DL2, UPPER(L3) AS DL3, UPPER(L4) AS DL4, UPPER(ENTITY_NAME) AS nodename";
                 break;
         }
 
@@ -360,6 +691,25 @@ public class OTFDFGenerator extends Processor {
         for (String counterId : counterIdArray) {
             if (!counterId.trim().equalsIgnoreCase("")) {
                 dynamicQuery += ", `" + counterId.trim() + "`";
+            }
+        }
+
+        // Also project dynamic NE META M# columns so they are available for grouping
+        // and final selection
+        for (String key : metaColumnsMap.keySet()) {
+            if (key != null && key.length() > 1) {
+                char c0 = key.charAt(0);
+                boolean looksLikeM = (c0 == 'M' || c0 == 'm');
+                boolean restDigits = true;
+                for (int i = 1; i < key.length(); i++) {
+                    if (!Character.isDigit(key.charAt(i))) {
+                        restDigits = false;
+                        break;
+                    }
+                }
+                if (looksLikeM && restDigits) {
+                    dynamicQuery += ", `" + key + "`";
+                }
             }
         }
 

@@ -2,6 +2,7 @@ package com.enttribe.pm.job.alert.otf;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -10,6 +11,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -22,6 +24,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.json.JSONArray;
@@ -32,30 +35,24 @@ import org.slf4j.LoggerFactory;
 import com.enttribe.sparkrunner.context.JobContext;
 import com.enttribe.sparkrunner.processors.Processor;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Joiner;
 
 public class OTFAlertCloseExtract extends Processor {
 
     private static final long serialVersionUID = 1L;
     private static final Logger logger = LoggerFactory.getLogger(OTFAlertCloseExtract.class);
-    private static Set<String> kpiCodeSet = new HashSet<>();
-    private static Set<String> counterIdSet = new HashSet<>();
 
     public OTFAlertCloseExtract() {
         super();
-        logger.info("OTFAlertCloseExtract No Argument Constructor Called!");
     }
 
     public OTFAlertCloseExtract(Dataset<Row> dataframe, Integer id, String processorName) {
         super(id, processorName);
         this.dataFrame = dataframe;
-        logger.info("OTFAlertCloseExtract Constructor Called with Input DataFrame With ID: {} and Processor Name: {}",
-                id,
-                processorName);
     }
 
     public OTFAlertCloseExtract(Integer id, String processorName) {
         super(id, processorName);
-        logger.info("OTFAlertCloseExtract Constructor Called with ID: {} and Processor Name: {}", id, processorName);
     }
 
     @Override
@@ -65,8 +62,6 @@ public class OTFAlertCloseExtract extends Processor {
             logger.info("No Rules Found, to Extract Configuration!");
             jobContext.setParameters("START_INDEX", "0");
             jobContext.setParameters("END_INDEX", "0");
-            logger.info("START_INDEX: {} Set to Job Context Successfully!", jobContext.getParameter("START_INDEX"));
-            logger.info("END_INDEX: {} Set to Job Context Successfully!", jobContext.getParameter("END_INDEX"));
             return this.dataFrame;
         }
 
@@ -76,7 +71,10 @@ public class OTFAlertCloseExtract extends Processor {
         int index = 0;
         for (Row row : this.dataFrame.collectAsList()) {
 
-            setGlobalVariables(row);
+            Set<String> kpiCodeSet = new HashSet<>();
+            Set<String> counterIdSet = new HashSet<>();
+
+            setGlobalVariables(row, kpiCodeSet, counterIdSet);
             Map<String, String> configurationMap = getConfigurationMap(row);
 
             Map<String, String> nodeAndAggregationDetailsMap = getNodeAndAggregationDetails(
@@ -91,72 +89,246 @@ public class OTFAlertCloseExtract extends Processor {
                     .writeValueAsString(nodeAndAggregationDetailsMap);
             String extractedParametersMapJson = new ObjectMapper().writeValueAsString(extractedParametersMap);
 
-            logger.info("Configuration Map: {}", configurationMap);
-            logger.info("Node And Aggregation Details Map: {}", nodeAndAggregationDetailsMap);
-            logger.info("Extracted Parameters Map: {}", extractedParametersMap);
-            logger.info("Filter Level: {} Set to Job Context Successfully For Index: {}", filterLevel, index);
+            logger.info("Configuration Map[Index={}]: {}", index, configurationMap);
+            logger.info("Node And Aggregation Details Map[Index={}]: {}", index, nodeAndAggregationDetailsMap);
+            logger.info("Extracted Parameters Map[Index={}]: {}", index, extractedParametersMap);
+            logger.info("Filter Level[Index={}]: {}", index, filterLevel);
 
             jobContext.setParameters("CONFIGURATION_MAP" + index, configurationMapJson);
             jobContext.setParameters("NODE_AND_AGGREGATION_DETAILS_MAP" + index, nodeAndAggregationDetailsMapJson);
             jobContext.setParameters("EXTRACTED_PARAMETERS_MAP" + index, extractedParametersMapJson);
             jobContext.setParameters("FILTER_LEVEL" + index, filterLevel);
 
+            if (kpiCodeSet == null || kpiCodeSet.isEmpty()) {
+                Map<String, String> counterAggrMap = new HashMap<>();
+                String configuration = configurationMap.get("CONFIGURATION");
+                counterAggrMap = getCounterAggrMap(configuration);
+
+                String counterAggrMapJson = new ObjectMapper().writeValueAsString(counterAggrMap);
+                jobContext.setParameters("COUNTER_AGGR_MAP" + index, counterAggrMapJson);
+                jobContext.setParameters("COUNTER_AGGR_FLAG" + index, "true");
+                logger.info("Counter Aggr Map[Index={}]: {}", index, counterAggrMap);
+            } else {
+                jobContext.setParameters("COUNTER_AGGR_FLAG" + index, "false");
+            }
+
+            logger.info("Total Received KPI Codes[Index={}]: {}", index, kpiCodeSet);
+            logger.info("Total Received Counter IDs[Index={}]: {}", index, counterIdSet);
+
+            Set<String> kpiWithSubKPI = new HashSet<>();
+
+            Set<String> normalKPIs = new HashSet<>();
+            normalKPIs.addAll(kpiCodeSet);
+            Set<String> timeShiftedKPIs = new HashSet<>();
+            kpiWithSubKPI = getNormalSubkpiWithKPI(normalKPIs, kpiWithSubKPI,
+                    timeShiftedKPIs, jobContext);
+
+            kpiCodeSet.addAll(kpiWithSubKPI);
+            logger.info("Total KPI Codes After Adding Sub KPI[Index={}]: {}", index, kpiCodeSet);
+
+            counterIdSet = getCounterIdSetUsingKPICodeSet(kpiCodeSet, jobContext);
+            logger.info("Generated Counter Ids[Index={}]: {}", index, counterIdSet);
+
+            jobContext.setParameters("KPI_CODES" + index, String.join(",", kpiCodeSet));
+            jobContext.setParameters("COUNTER_IDS" + index, String.join(",", counterIdSet));
+
+            Map<String, Map<String, String>> counterInfoMap = new HashMap<>();
+            if (!kpiCodeSet.isEmpty()) {
+                counterInfoMap = getCounterInfoMap(jobContext, index);
+            }
+            counterInfoMap = getCounterInfoMap2(jobContext, index, counterInfoMap);
+
+            String counterInfoMapJson = new ObjectMapper().writeValueAsString(counterInfoMap);
+            jobContext.setParameters("COUNTER_INFO_MAP" + index, counterInfoMapJson);
+
+            String categoryList = counterInfoMap.entrySet().stream().map(e -> e.getValue().get("CATEGORY_NAME"))
+                    .distinct().collect(Collectors.joining(","));
+            jobContext.setParameters("CATEGORY_LIST" + index, categoryList);
+
+            Map<String, List<Map<String, String>>> catgoryInfoMap = getCatgoryInfoMap(counterInfoMap);
+
+            String categoryInfoMapJson = new ObjectMapper().writeValueAsString(catgoryInfoMap);
+            jobContext.setParameters("CATEGORY_INFO_MAP" + index, categoryInfoMapJson);
+
+            String frequency = jobContext.getParameter("FREQUENCY");
+            getPMCounterVariableAggrQuery(jobContext, frequency, index);
+
+            Map<String, Map<String, String>> kpiFormulaFinalMap = new HashMap<>();
+            if (!kpiCodeSet.isEmpty()) {
+                String kpiCodes = jobContext.getParameter("KPI_CODES" + index);
+                kpiFormulaFinalMap = getKpiFormulaMap(kpiCodes, jobContext, index);
+            }
+
+            String kpiFormulaFinalMapJson = new ObjectMapper().writeValueAsString(kpiFormulaFinalMap);
+            jobContext.setParameters("KPI_FORMULA_MAP" + index, kpiFormulaFinalMapJson);
+
+            logger.info("Counter Info Map[Index={}]: {}", index, counterInfoMap);
+            logger.info("Category List[Index={}]: {}", index, categoryList);
+            logger.info("Catgory Info Map[Index={}]: {}", index, catgoryInfoMap);
+            logger.info("KPI Formula Final Map[Index={}]: {}", index, kpiFormulaFinalMap);
+
             ++index;
         }
 
-        logger.info("Total Received KPI Codes: {}", String.join(",", kpiCodeSet));
-        logger.info("Total Received Counter IDs: {}", String.join(",", counterIdSet));
-
-        if (counterIdSet.isEmpty()) {
-            counterIdSet = getCounterIdSetUsingKPICodeSet(kpiCodeSet, jobContext);
-            logger.info("Generated Counter Ids: {}", counterIdSet);
-        }
-
-        jobContext.setParameters("KPI_CODES", String.join(",", kpiCodeSet));
-        jobContext.setParameters("COUNTER_IDS", String.join(",", counterIdSet));
-
-        Map<String, Map<String, String>> counterInfoMap = new HashMap<>();
-        if (!kpiCodeSet.isEmpty()) {
-            counterInfoMap = getCounterInfoMap(jobContext);
-        }
-        counterInfoMap = getCounterInfoMap2(jobContext, counterInfoMap);
-
-        String counterInfoMapJson = new ObjectMapper().writeValueAsString(counterInfoMap);
-        jobContext.setParameters("COUNTER_INFO_MAP", counterInfoMapJson);
-
-        String categoryList = counterInfoMap.entrySet().stream().map(e -> e.getValue().get("CATEGORY_NAME"))
-                .distinct().collect(Collectors.joining(","));
-        jobContext.setParameters("CATEGORY_LIST", categoryList);
-
-        Map<String, List<Map<String, String>>> catgoryInfoMap = getCatgoryInfoMap(counterInfoMap);
-
-        String categoryInfoMapJson = new ObjectMapper().writeValueAsString(catgoryInfoMap);
-        jobContext.setParameters("CATEGORY_INFO_MAP", categoryInfoMapJson);
-
-        String frequency = jobContext.getParameter("FREQUENCY");
-        getPMCounterVariableAggrQuery(jobContext, frequency);
-
-        Map<String, Map<String, String>> kpiFormulaFinalMap = new HashMap<>();
-        if (!kpiCodeSet.isEmpty()) {
-            String kpiCodes = jobContext.getParameter("KPI_CODES");
-            kpiFormulaFinalMap = getKpiFormulaMap(kpiCodes, jobContext);
-        }
-
-        String kpiFormulaFinalMapJson = new ObjectMapper().writeValueAsString(kpiFormulaFinalMap);
-        jobContext.setParameters("KPI_FORMULA_MAP", kpiFormulaFinalMapJson);
-
-        logger.info("Counter Info Map: {}", counterInfoMap);
-        logger.info("Category List: {}", categoryList);
-        logger.info("Catgory Info Map: {}", catgoryInfoMap);
-        logger.info("KPI Formula Final Map: {}", kpiFormulaFinalMap);
-
         jobContext.setParameters("START_INDEX", "0");
         jobContext.setParameters("END_INDEX", String.valueOf(index));
-
-        logger.info("START_INDEX: {} Set to Job Context Successfully!", jobContext.getParameter("START_INDEX"));
-        logger.info("END_INDEX: {} Set to Job Context Successfully!", jobContext.getParameter("END_INDEX"));
+        logger.info("START_INDEX= {}, END_INDEX= {}", "0", String.valueOf(index));
 
         return this.dataFrame;
+    }
+
+    private Map<String, String> getCounterAggrMap(String configuration) {
+        Map<String, String> counterAggrMap = new HashMap<>();
+        try {
+            String fixedJson = configuration.replace("'", "\"").replaceAll("^\"|\"$", "");
+            JSONObject jsonObject = new JSONObject(fixedJson);
+
+            JSONArray kpiJsonArray = jsonObject.getJSONArray("kpi");
+
+            for (int i = 0; i < kpiJsonArray.length(); i++) {
+                try {
+                    JSONObject kpiJsonObject = kpiJsonArray.getJSONObject(i);
+                    String kpiName = kpiJsonObject.getString("kpiName");
+                    String nodeaggregation = kpiJsonObject.getString("nodeaggregation");
+                    String timeaggregation = kpiJsonObject.getString("timeaggregation");
+                    String kpiCode = kpiName.split("-")[0];
+                    counterAggrMap.put(kpiCode, nodeaggregation + "##" + timeaggregation);
+                } catch (Exception e) {
+                    logger.error("Error processing kpiJsonObject at index {}: {}, {}", i, e.getMessage(), e);
+                }
+            }
+        } catch (Exception ex) {
+            logger.error("Error in getCounterAggrMap: {}, {}", ex.getMessage(), ex);
+        }
+        return counterAggrMap;
+    }
+
+    private Set<String> getNormalSubkpiWithKPI(Set<String> kpiCode, Set<String> kpiWithSubKPI,
+            Set<String> timeShiftKPI, JobContext jobContext) {
+
+        boolean IS_LOG_ENABLED = true;
+
+        if (IS_LOG_ENABLED) {
+            logger.info("Getting Normal KPI with Sub KPI: KPI Code={}, KPI With Sub KPI={}, Time Shift KPI={}", kpiCode,
+                    kpiWithSubKPI, timeShiftKPI);
+        }
+
+        Map<String, String> contextMap = jobContext.getParameters();
+        Connection connection = null;
+        PreparedStatement preparedStatement = null;
+        ResultSet resultSet = null;
+
+        String kpiCodes = Joiner.on(",").join(kpiCode);
+        Set<String> subkpi = new HashSet<>();
+
+        String query = "SELECT KPI_FORMULA_DESC, KPI_CODE FROM KPI_FORMULA WHERE KPI_CODE IN ('"
+                + kpiCodes.replace(",", "','")
+                + "')";
+
+        if (IS_LOG_ENABLED) {
+            logger.info("MySQL Query To Get Sub KPI Formula Desc With KPI: {}", query);
+        }
+        try {
+            final String jdbcDriver = contextMap.get("SPARK_PM_JDBC_DRIVER");
+            final String jdbcUrl = contextMap.get("SPARK_PM_JDBC_URL");
+            final String jdbcUsername = contextMap.get("SPARK_PM_JDBC_USERNAME");
+            final String jdbcPassword = contextMap.get("SPARK_PM_JDBC_PASSWORD");
+
+            Class.forName(jdbcDriver);
+            connection = DriverManager.getConnection(jdbcUrl, jdbcUsername, jdbcPassword);
+            preparedStatement = connection.prepareStatement(query);
+            resultSet = preparedStatement.executeQuery();
+            while (resultSet.next()) {
+                if (!StringUtils.isEmpty(resultSet.getString(1)) && !resultSet.getString(1).equalsIgnoreCase("null")
+                        && !resultSet.getString(1).contains("TimeShift")) {
+
+                    String kpiFormulaDesc = resultSet.getString(1);
+                    if (IS_LOG_ENABLED) {
+                        logger.info("KPI Formula Desc: {}", kpiFormulaDesc);
+                    }
+                    subkpi = getSubKPICode(kpiFormulaDesc);
+                    if (IS_LOG_ENABLED) {
+                        logger.info("Sub KPI: {}", subkpi);
+                    }
+                    kpiWithSubKPI.addAll(subkpi);
+                } else {
+                    timeShiftKPI.add(resultSet.getString(2));
+                }
+            }
+
+            if (IS_LOG_ENABLED) {
+                logger.info("KPI With Sub KPI: {}", kpiWithSubKPI);
+                logger.info("Time Shift KPI: {}", timeShiftKPI);
+                logger.info(
+                        "Sub KPI is not Empty, Getting Normal KPI with Sub KPI: Sub KPI={}, KPI With Sub KPI={}, Time Shift KPI={}",
+                        subkpi, kpiWithSubKPI, timeShiftKPI);
+            }
+            if (subkpi != null && !subkpi.isEmpty()) {
+                if (IS_LOG_ENABLED) {
+                    logger.info(
+                            "Sub KPI is not Empty, Getting Normal KPI with Sub KPI: Sub KPI={}, KPI With Sub KPI={}, Time Shift KPI={}",
+                            subkpi,
+                            kpiWithSubKPI, timeShiftKPI);
+                }
+                kpiWithSubKPI = getNormalSubkpiWithKPI(subkpi, kpiWithSubKPI, timeShiftKPI, jobContext);
+            }
+            if (kpiCodes != null && !kpiCodes.trim().isEmpty()) {
+                kpiWithSubKPI.addAll(Arrays.stream(kpiCodes.split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toSet()));
+            }
+            if (IS_LOG_ENABLED) {
+                logger.info("Final KPI With Sub KPI Set: {}", kpiWithSubKPI);
+            }
+        } catch (Exception e) {
+            logger.error("Exception While Getting Normal KPI with Sub KPI, Message={}, Error={}", e.getMessage(), e);
+        } finally {
+            close(connection, preparedStatement, resultSet);
+        }
+        return kpiWithSubKPI;
+    }
+
+    private static void close(Connection connection, PreparedStatement preparedStatement, ResultSet resultSet) {
+        if (resultSet != null) {
+            try {
+                resultSet.close();
+            } catch (SQLException e) {
+            }
+        }
+        if (preparedStatement != null) {
+            try {
+                preparedStatement.close();
+            } catch (SQLException e) {
+            }
+        }
+        if (connection != null) {
+            try {
+                connection.close();
+            } catch (SQLException e) {
+            }
+        }
+    }
+
+    public static Set<String> getSubKPICode(String kpiFormulaDesc) {
+
+        boolean IS_LOG_ENABLED = true;
+        if (IS_LOG_ENABLED) {
+            logger.info("Getting Sub KPI Code: KPI Formula Desc={}", kpiFormulaDesc);
+        }
+        Set<String> kpicodeList = new HashSet<>();
+        if (kpiFormulaDesc.contains("KPI#")) {
+            final Pattern operatorPattern = Pattern.compile("KPI#(?:G)?(\\d+)");
+            final Matcher operatorMatcher = operatorPattern.matcher(kpiFormulaDesc);
+            while (operatorMatcher.find()) {
+                String matchkey = operatorMatcher.group(1);
+                kpicodeList.add(matchkey);
+            }
+        }
+        if (IS_LOG_ENABLED) {
+            logger.info("Sub KPI Code List: {}", kpicodeList);
+        }
+        return kpicodeList;
     }
 
     private String getFilterLevel(Map<String, String> EXTRACTED_PARAMETERS_MAP,
@@ -182,11 +354,11 @@ public class OTFAlertCloseExtract extends Processor {
     }
 
     private Map<String, Map<String, String>> getCounterInfoMap2(JobContext jobContext,
-            Map<String, Map<String, String>> counterInfoMap) throws SQLException {
+            int index, Map<String, Map<String, String>> counterInfoMap) throws SQLException {
 
         String query = "SELECT UPPER(COUNTER_HEADER_NAME) AS COUNTER_HEADER_NAME, KPI_COUNTER_ID_PK AS PM_COUNTER_VARIABLE_ID_PK, UPPER(CATEGORY_ALIAS_NAME) AS CATEGORY_NAME, ATTRIBUTE AS ATTRIBUTE, '' AS SUBCATEGORY1_VALUE, '' AS SUBCATEGORY2_VALUE, '' AS SUBCATEGORY3_VALUE, '' AS SUBCATEGORY4_VALUE,  '' AS SUBCAT_HEADER1, '' AS SUBCAT_HEADER2, '' AS SUBCAT_HEADER3, '' AS SUBCAT_HEADER4, SEQUENCE_NO AS SEQUENCE_NO, PM_CATEGORY_ID_FK AS CATEGORY_ID, '' AS UNIQUE_STRING, NODE_AGGREGATION AS NODE_AGGREGATION, TIME_AGGREGATION AS TIME_AGGREGATION FROM KPI_COUNTER WHERE KPI_COUNTER_ID_PK IN ($COUNTER_IDS)";
 
-        String counterIds = jobContext.getParameter("COUNTER_IDS");
+        String counterIds = jobContext.getParameter("COUNTER_IDS" + index);
         query = query.replace("$COUNTER_IDS", counterIds);
 
         ResultSet resultSet = executeQueryAndGetResultSet(query, jobContext);
@@ -198,14 +370,14 @@ public class OTFAlertCloseExtract extends Processor {
         return counterInfoMap;
     }
 
-    private void setGlobalVariables(Row row) {
+    private void setGlobalVariables(Row row, Set<String> kpiCodeSet, Set<String> counterIdSet) {
         String EXPRESSION = row.getAs("EXPRESSION") != null ? row.getAs("EXPRESSION").toString() : "";
         if (!EXPRESSION.isEmpty()) {
-            extractCodes(EXPRESSION);
+            extractCodes(EXPRESSION, kpiCodeSet, counterIdSet);
         }
     }
 
-    private void extractCodes(String expression) {
+    private void extractCodes(String expression, Set<String> kpiCodeSet, Set<String> counterIdSet) {
         Matcher kpiMatcher = Pattern.compile("KPI#(\\d+)").matcher(expression);
         while (kpiMatcher.find()) {
             String kpiCode = kpiMatcher.group(1);
@@ -251,7 +423,8 @@ public class OTFAlertCloseExtract extends Processor {
         return date;
     }
 
-    private void getPMCounterVariableAggrQuery(JobContext jobContext, String frequency) throws Exception {
+    @SuppressWarnings("unchecked")
+    private void getPMCounterVariableAggrQuery(JobContext jobContext, String frequency, int index) throws Exception {
 
         logger.info("Get PM Counter Variable Aggr Query, With Frequency={}", frequency);
 
@@ -285,18 +458,31 @@ public class OTFAlertCloseExtract extends Processor {
 
         logger.info("Time Key={}", timeKey);
 
-        String categoryInfoMapJson = jobContext.getParameter("CATEGORY_INFO_MAP");
-        @SuppressWarnings("unchecked")
+        String categoryInfoMapJson = jobContext.getParameter("CATEGORY_INFO_MAP" + index);
         Map<String, List<Map<String, String>>> categoryInfoMap = new ObjectMapper().readValue(categoryInfoMapJson,
                 Map.class);
 
-        String categoryList = jobContext.getParameter("CATEGORY_LIST");
+        String categoryList = jobContext.getParameter("CATEGORY_LIST" + index);
 
         logger.info("Category List={}", categoryList);
         logger.info("Category Info Map={}", categoryInfoMap);
 
-        COUNTER_WITH_NODE_AGGR_BUILDER.append(
-                " SELECT fiveminutekey, quarterKey, dateKey, hourKey, finalKey, categoryname, NAM, FIRST_VALUE(metaData) AS metaData, ");
+        if (frequency.equalsIgnoreCase("5 MIN")) {
+            COUNTER_WITH_NODE_AGGR_BUILDER.append(
+                    " SELECT fiveminutekey, quarterKey, dateKey, hourKey, finalKey, categoryname, NAM, FIRST_VALUE(metaData) AS metaData, ");
+        } else {
+            COUNTER_WITH_NODE_AGGR_BUILDER.append(
+                    " SELECT quarterKey, dateKey, hourKey, finalKey, categoryname, NAM, FIRST_VALUE(metaData) AS metaData, ");
+        }
+
+        String COUNTER_AGGR_FLAG = jobContext.getParameter("COUNTER_AGGR_FLAG" + index);
+        boolean isCounterAggr = COUNTER_AGGR_FLAG.equalsIgnoreCase("true");
+        Map<String, String> counterAggrMap = new HashMap<>();
+        if (COUNTER_AGGR_FLAG.equalsIgnoreCase("true")) {
+            String COUNTER_AGGR_MAP = jobContext.getParameter("COUNTER_AGGR_MAP" + index);
+            counterAggrMap = new ObjectMapper().readValue(COUNTER_AGGR_MAP, Map.class);
+            logger.info("Counter Aggr Map={}", counterAggrMap);
+        }
 
         for (String category : categoryList.split(",")) {
 
@@ -312,6 +498,18 @@ public class OTFAlertCloseExtract extends Processor {
                 String pmCounterVariableIdPk = eachCategoryInfoMap.get("PM_COUNTER_VARIABLE_ID_PK");
                 String nodeAggregation = eachCategoryInfoMap.get("NODE_AGGREGATION");
                 String timeAggregation = eachCategoryInfoMap.get("TIME_AGGREGATION");
+
+                if (isCounterAggr) {
+                    String nodeTimeAggr = counterAggrMap.get(pmCounterVariableIdPk);
+                    if (nodeTimeAggr != null) {
+                        nodeAggregation = nodeTimeAggr.split("##")[0];
+                        timeAggregation = nodeTimeAggr.split("##")[1];
+                    }
+
+                }
+
+                logger.info("Sequence No={}, PM Counter Variable Id PK={}, Node Aggregation={}, Time Aggregation={}",
+                        sequenceNo, pmCounterVariableIdPk, nodeAggregation, timeAggregation);
 
                 String counterKey = "C" + sequenceNo + "#" + pmCounterVariableIdPk;
                 String counterId = counterKey.split("#")[1];
@@ -406,19 +604,31 @@ public class OTFAlertCloseExtract extends Processor {
         String COUNTER_NODE_AGGR_QUERY = "SELECT finalKey, FIRST_VALUE(metaData) AS metaData, " + NODE_AGGREGATION_QUERY
                 + " FROM FinalCounterData GROUP BY finalKey";
 
+        if (frequency.equalsIgnoreCase("PERHOUR") || frequency.equalsIgnoreCase("PERDAY")
+                || frequency.equalsIgnoreCase("PERWEEK") || frequency.equalsIgnoreCase("PERMONTH")) {
+            COUNTER_NODE_AGGR_QUERY += ", quarterKey";
+        }
+
         String FILTER_QUERY_FINAL = FILTER_QUERY;
 
-        String RAW_FILE_COUNTER_NODE_AGGR_QUERY = COUNTER_WITH_NODE_AGGR
-                + " FROM JOINED_RESULT GROUP BY fiveminutekey, quarterKey, finalKey, dateKey, hourKey, NAM, categoryname";
+        String RAW_FILE_COUNTER_NODE_AGGR_QUERY = "";
+
+        if (frequency.equalsIgnoreCase("5 MIN")) {
+            RAW_FILE_COUNTER_NODE_AGGR_QUERY += COUNTER_WITH_NODE_AGGR
+                    + " FROM JOINED_RESULT GROUP BY fiveminutekey, quarterKey, finalKey, dateKey, hourKey, NAM, categoryname";
+        } else {
+            RAW_FILE_COUNTER_NODE_AGGR_QUERY += COUNTER_WITH_NODE_AGGR
+                    + " FROM JOINED_RESULT GROUP BY quarterKey, finalKey, dateKey, hourKey, NAM, categoryname";
+        }
 
         String COUNTER_TIME_AGGR_QUERY = "SELECT finalKey, FIRST_VALUE(metaData) AS metaData, " + COUNTER_WITH_TIME_AGGR
                 + " FROM finalNodeAggrData GROUP BY finalKey ORDER BY finalKey";
 
-        jobContext.setParameters("COUNTER_MAP_QUERY", COUNTER_QUERY_MAP);
-        jobContext.setParameters("FILTER_QUERY_FINAL", FILTER_QUERY_FINAL);
-        jobContext.setParameters("COUNTER_NODE_AGGR_QUERY", COUNTER_NODE_AGGR_QUERY);
-        jobContext.setParameters("COUNTER_TIME_AGGR_QUERY", COUNTER_TIME_AGGR_QUERY);
-        jobContext.setParameters("RAW_FILE_COUNTER_NODE_AGGR_QUERY", RAW_FILE_COUNTER_NODE_AGGR_QUERY);
+        jobContext.setParameters("COUNTER_MAP_QUERY" + index, COUNTER_QUERY_MAP);
+        jobContext.setParameters("FILTER_QUERY_FINAL" + index, FILTER_QUERY_FINAL);
+        jobContext.setParameters("COUNTER_NODE_AGGR_QUERY" + index, COUNTER_NODE_AGGR_QUERY);
+        jobContext.setParameters("COUNTER_TIME_AGGR_QUERY" + index, COUNTER_TIME_AGGR_QUERY);
+        jobContext.setParameters("RAW_FILE_COUNTER_NODE_AGGR_QUERY" + index, RAW_FILE_COUNTER_NODE_AGGR_QUERY);
 
         logger.info("COUNTER_MAP_QUERY={}", COUNTER_QUERY_MAP);
         logger.info("FILTER_QUERY_FINAL={}", FILTER_QUERY_FINAL);
@@ -534,13 +744,13 @@ public class OTFAlertCloseExtract extends Processor {
             String outOfLast = "0";
             String instances = "0";
 
-            JSONObject consistencyJson = configJson.getJSONObject("Consistency");
-            if (consistencyJson.has("outOfLast") && !consistencyJson.getString("outOfLast").isEmpty()) {
-                outOfLast = consistencyJson.getString("outOfLast");
+            JSONObject consistencyJson = configJson.getJSONObject("closureConsistency");
+            if (consistencyJson.has("closureoutOfLast") && !consistencyJson.getString("closureoutOfLast").isEmpty()) {
+                outOfLast = consistencyJson.getString("closureoutOfLast");
             }
 
-            if (consistencyJson.has("Instances") && !consistencyJson.getString("Instances").isEmpty()) {
-                instances = consistencyJson.getString("Instances");
+            if (consistencyJson.has("closureInstances") && !consistencyJson.getString("closureInstances").isEmpty()) {
+                instances = consistencyJson.getString("closureInstances");
             }
 
             JSONArray cellArray = configJson.getJSONArray("cells");
@@ -612,7 +822,6 @@ public class OTFAlertCloseExtract extends Processor {
         } catch (Exception e) {
             logger.error("Error In Extracting Parameters From Configuration, Message: {}, Error: {}", e.getMessage(),
                     e);
-            e.printStackTrace();
             return new LinkedHashMap<>();
         }
     }
@@ -625,7 +834,7 @@ public class OTFAlertCloseExtract extends Processor {
                 "Getting Level For Alert With Inputs: GeoL1List={}, GeoL2List={}, GeoL3List={}, GeoL4List={}, Cells={}, Node={}, CoreDomains={}, DOMAIN={}, MoList={}, NodeList={}",
                 geoL1List, geoL2List, geoL3List, geoL4List, cells, node, coreDomains, DOMAIN, moList, nodeList);
 
-        boolean isNodeAggregated = nodeList.stream().anyMatch(s -> s.contains("AGGREGATED"));
+        boolean isNodeAggregated = nodeList.stream().anyMatch(s -> s.contains("CLUBBED"));
         boolean isMoAggregated = moList.stream().anyMatch(s -> s.contains("AGGREGATED"));
         boolean isNodeIndividual = nodeList.stream().anyMatch(s -> s.contains("INDIVIDUAL"));
         boolean isMoIndividual = moList.stream().anyMatch(s -> s.contains("INDIVIDUAL"));
@@ -751,8 +960,6 @@ public class OTFAlertCloseExtract extends Processor {
         CORRELATION_ENABLE = row.getAs("CORRELATION_ENABLE") != null ? row.getAs("CORRELATION_ENABLE").toString()
                 : "";
         MANUAL_CLEARED = row.getAs("MANUAL_CLEARED") != null ? row.getAs("MANUAL_CLEARED").toString() : "";
-        // PROBABLE_CAUSE = row.getAs("PROBABLE_CAUSE") != null ?
-        // row.getAs("PROBABLE_CAUSE").toString() : "";
         PROBABLE_CAUSE = row.getAs("DESCRIPTION") != null ? row.getAs("DESCRIPTION").toString() : "";
         PRIORITY = row.getAs("PRIORITY") != null ? row.getAs("PRIORITY").toString() : "";
         ALARM_LAYER = row.getAs("ALARM_LAYER") != null ? row.getAs("ALARM_LAYER").toString() : "";
@@ -867,15 +1074,13 @@ public class OTFAlertCloseExtract extends Processor {
             String isGeoL4MultiSelect = !geoL4.isEmpty() && !geoL4.contains("CLUBBED") && !geoL4.contains("INDIVIDUAL")
                     ? "true"
                     : "false";
-            // For Custom Node Case:
+
             String isNodeMultiSelect = "";
             if (geoL1.contains("Custom")) {
                 isNodeMultiSelect = "true";
             } else {
                 isNodeMultiSelect = "false";
             }
-            // String isMoMultiSelect = !mo.contains("AGGREGATED") &&
-            // !mo.contains("INDIVIDUAL") ? "true" : "false";
 
             nodeAndAggregationDetails.put("isGeoL1MultiSelect", isGeoL1MultiSelect);
             nodeAndAggregationDetails.put("isGeoL2MultiSelect", isGeoL2MultiSelect);
@@ -883,7 +1088,6 @@ public class OTFAlertCloseExtract extends Processor {
             nodeAndAggregationDetails.put("isGeoL4MultiSelect", isGeoL4MultiSelect);
             nodeAndAggregationDetails.put("isNodeMultiSelect", isNodeMultiSelect);
             nodeAndAggregationDetails.put("cellsList", cellsList.toString());
-            // nodeAndAggregationDetails.put("isMoMultiSelect", isMoMultiSelect);
 
         } catch (Exception e) {
             logger.error("Error In Getting Node And Aggregation Details, Message: {}, Error: {}", e.getMessage(), e);
@@ -924,11 +1128,12 @@ public class OTFAlertCloseExtract extends Processor {
         return df.selectExpr(deduplicatedColumns.toArray(new String[0]));
     }
 
-    public static Map<String, Map<String, String>> getCounterInfoMap(JobContext jobContext) throws SQLException {
+    public static Map<String, Map<String, String>> getCounterInfoMap(JobContext jobContext, int index)
+            throws SQLException {
 
         Map<String, Map<String, String>> counterInfoMap = new LinkedHashMap<>();
 
-        String counterInfoMapQuery = getCounterInfoMapQuery(jobContext);
+        String counterInfoMapQuery = getCounterInfoMapQuery(jobContext, index);
 
         ResultSet resultSet = executeQueryAndGetResultSet(counterInfoMapQuery, jobContext);
 
@@ -1006,17 +1211,12 @@ public class OTFAlertCloseExtract extends Processor {
         String SPARK_PM_JDBC_USERNAME = jobContext.getParameter("SPARK_PM_JDBC_USERNAME");
         String SPARK_PM_JDBC_PASSWORD = jobContext.getParameter("SPARK_PM_JDBC_PASSWORD");
 
-        logger.info(
-                "Executing Query: {} With Inputs: SPARK_PM_JDBC_DRIVER={}, SPARK_PM_JDBC_URL={}, SPARK_PM_JDBC_USERNAME={}, SPARK_PM_JDBC_PASSWORD={}",
-                query, SPARK_PM_JDBC_DRIVER, SPARK_PM_JDBC_URL, SPARK_PM_JDBC_USERNAME, SPARK_PM_JDBC_PASSWORD);
-
         try {
             Class.forName(SPARK_PM_JDBC_DRIVER);
             Connection connection = DriverManager.getConnection(SPARK_PM_JDBC_URL, SPARK_PM_JDBC_USERNAME,
                     SPARK_PM_JDBC_PASSWORD);
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery(query);
-            logger.info("Query Executed Successfully!");
             return resultSet;
         } catch (Exception e) {
             logger.error("Error In Getting Connection, Message: {}, Error: {}", e.getMessage(), e);
@@ -1024,7 +1224,7 @@ public class OTFAlertCloseExtract extends Processor {
         return null;
     }
 
-    private static String getCounterInfoMapQuery(JobContext jobContext) {
+    private static String getCounterInfoMapQuery(JobContext jobContext, int index) {
 
         String counterInfoMapQuery = "SELECT DISTINCT UPPER(REPLACE(cv.COUNTER, ' ', '')) AS COUNTER_HEADER_NAME, cv.PM_COUNTER_VARIABLE_ID_PK AS PM_COUNTER_VARIABLE_ID_PK, UPPER(REPLACE(kc.CATEGORY_ALIAS_NAME, ' ', '')) AS CATEGORY_NAME, cv.ATTRIBUTE AS ATTRIBUTE, cv.SUBCATEGORY1_VALUE AS SUBCATEGORY1_VALUE, cv.SUBCATEGORY2_VALUE AS SUBCATEGORY2_VALUE, cv.SUBCATEGORY3_VALUE AS SUBCATEGORY3_VALUE, cv.SUBCATEGORY4_VALUE AS SUBCATEGORY4_VALUE, CONCAT('C', subcat1.SEQUENCE_NO) AS SUBCAT_HEADER1, CONCAT('C', subcat2.SEQUENCE_NO) AS SUBCAT_HEADER2, CONCAT('C', subcat3.SEQUENCE_NO) AS SUBCAT_HEADER3, CONCAT('C', subcat4.SEQUENCE_NO) AS SUBCAT_HEADER4, kc.SEQUENCE_NO, UPPER(REPLACE(pc.PM_CATEGORY_ID_PK, ' ', '')) AS CATEGORY_ID, cv.UNIQUE_STRING, cv.NODE_AGGREGATION AS NODE_AGGREGATION, cv.TIME_AGGREGATION AS TIME_AGGREGATION FROM KPI_FORMULA kpi INNER JOIN FORMULA_COUNTER_MAPPING map ON kpi.KPI_FORMULA_ID_PK = map.KPI_FORMULA_ID_FK INNER JOIN PM_COUNTER_VARIABLE cv ON cv.PM_COUNTER_VARIABLE_ID_PK = map.PM_COUNTER_VARIABLE_ID_FK INNER JOIN KPI_COUNTER kc ON UPPER(kc.KPI_COUNTER_ID_PK) = UPPER(cv.KPI_COUNTER_ID_FK) INNER JOIN PM_CATEGORY pc ON pc.PM_CATEGORY_ID_PK = cv.PM_CATEGORY_ID_FK LEFT JOIN KPI_COUNTER subcat1 ON subcat1.KPI_COUNTER_ID_PK = cv.KPI_COUNTER1_ID_FK LEFT JOIN KPI_COUNTER subcat2 ON subcat2.KPI_COUNTER_ID_PK = cv.KPI_COUNTER2_ID_FK LEFT JOIN KPI_COUNTER subcat3 ON subcat3.KPI_COUNTER_ID_PK = cv.KPI_COUNTER3_ID_FK LEFT JOIN KPI_COUNTER subcat4 ON subcat4.KPI_COUNTER_ID_PK = cv.KPI_COUNTER4_ID_FK WHERE kpi.DOMAIN = '$DOMAIN' AND kpi.VENDOR = '$VENDOR' AND kpi.TECHNOLOGY = '$TECHNOLOGY'";
 
@@ -1032,21 +1232,23 @@ public class OTFAlertCloseExtract extends Processor {
                 .replace("$VENDOR", jobContext.getParameter("VENDOR"))
                 .replace("$TECHNOLOGY", jobContext.getParameter("TECHNOLOGY"));
 
-        if (jobContext.getParameter("KPI_CODES") != null && !jobContext.getParameter("KPI_CODES").isEmpty()) {
+        if (jobContext.getParameter("KPI_CODES" + index) != null
+                && !jobContext.getParameter("KPI_CODES" + index).isEmpty()) {
             counterInfoMapQuery = counterInfoMapQuery + " AND kpi.KPI_CODE IN ($KPI_CODES)";
-            counterInfoMapQuery = counterInfoMapQuery.replace("$KPI_CODES", jobContext.getParameter("KPI_CODES"));
+            counterInfoMapQuery = counterInfoMapQuery.replace("$KPI_CODES",
+                    jobContext.getParameter("KPI_CODES" + index));
         }
 
         return counterInfoMapQuery;
     }
 
-    private static String getKpiFormulaQuery(JobContext jobContext) {
+    private static String getKpiFormulaQuery(JobContext jobContext, int index) {
 
         String kpiFormulaQuery = "SELECT DISTINCT CONCAT(kf.KPI_CODE, '##', kf.KPI_FORMULA_DESC) AS KPI_CODE_FORMULA, CAST(COALESCE(CONCAT('C', kc.SEQUENCE_NO, '#', pmc.PM_COUNTER_VARIABLE_ID_PK), 'null') AS BINARY) AS BINARY_VALUE, pmc.UNIQUE_STRING AS UNIQUE_STRING FROM KPI_FORMULA kf LEFT JOIN ( FORMULA_COUNTER_MAPPING fcm JOIN PM_COUNTER_VARIABLE pmc ON fcm.PM_COUNTER_VARIABLE_ID_FK = pmc.PM_COUNTER_VARIABLE_ID_PK ) ON fcm.KPI_FORMULA_ID_FK = kf.KPI_FORMULA_ID_PK LEFT JOIN GENERIC_KPI_MAPPING gkm ON kf.KPI_FORMULA_ID_PK = gkm.KPI_FORMULA_ID_FK LEFT JOIN PM_GENERIC_KPI gk ON gkm.PM_GENERIC_KPI_ID_FK = gk.PM_GENERIC_KPI_ID_PK LEFT JOIN KPI_COUNTER kc ON kc.KPI_COUNTER_ID_PK = pmc.KPI_COUNTER_ID_FK WHERE kf.DOMAIN = '$DOMAIN' AND kf.VENDOR = '$VENDOR' AND kf.KPI_CODE IN ($KPI_CODES) AND kf.DELETED = 0";
 
         kpiFormulaQuery = kpiFormulaQuery.replace("$DOMAIN", jobContext.getParameter("DOMAIN"))
                 .replace("$VENDOR", jobContext.getParameter("VENDOR"))
-                .replace("$KPI_CODES", jobContext.getParameter("KPI_CODES"));
+                .replace("$KPI_CODES", jobContext.getParameter("KPI_CODES" + index));
 
         return kpiFormulaQuery;
 
@@ -1057,8 +1259,6 @@ public class OTFAlertCloseExtract extends Processor {
         if (kpiCodeSet == null || kpiCodeSet.isEmpty()) {
             return counterIdSet;
         }
-
-        // Convert KPI codes into comma-separated string for SQL IN clause
         String kpiCodeList = kpiCodeSet.stream()
                 .map(code -> "'" + code + "'")
                 .collect(Collectors.joining(", "));
@@ -1107,14 +1307,16 @@ public class OTFAlertCloseExtract extends Processor {
         return counterIdSet;
     }
 
-    private static Map<String, Map<String, String>> getKpiFormulaMap(String kpiCodes, JobContext jobContext) {
+    private static Map<String, Map<String, String>> getKpiFormulaMap(String kpiCodes, JobContext jobContext,
+            int index) {
 
         Map<String, Map<String, String>> kpiFormulaFinalMap = new LinkedHashMap<>();
 
         logger.info("Getting KPI Formula Map With KPI Codes={}", kpiCodes);
         try {
 
-            String kpiFormulaQuery = getKpiFormulaQuery(jobContext);
+            String kpiFormulaQuery = getKpiFormulaQuery(jobContext, index);
+            logger.info("KPI Formula Query: {}", kpiFormulaQuery);
             ResultSet resultSet = executeQueryAndGetResultSet(kpiFormulaQuery, jobContext);
 
             while (resultSet.next()) {

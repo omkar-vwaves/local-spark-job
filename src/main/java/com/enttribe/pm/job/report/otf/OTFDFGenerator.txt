@@ -5,59 +5,53 @@ import org.slf4j.LoggerFactory;
 
 import com.enttribe.sparkrunner.context.JobContext;
 import com.enttribe.sparkrunner.processors.Processor;
+
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.functions;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
-import static org.apache.spark.sql.functions.col;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Consumer;
-import java.util.HashMap;
 import java.util.stream.Collectors;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 
 public class OTFDFGenerator extends Processor {
 
     private static Logger logger = LoggerFactory.getLogger(OTFDFGenerator.class);
+    private static final boolean IS_LOG_ENABLED = false;
 
     public OTFDFGenerator() {
         super();
-        logger.info("OTFDFGenerator Constructor Called!");
     }
 
     public OTFDFGenerator(Dataset<Row> dataframe, Integer id, String processorName) {
         super(id, processorName);
-        logger.info("OTFDFGenerator Constructor Called With Id = {} And Processor Name = {}", id, processorName);
     }
 
     @Override
     public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) throws Exception {
 
-        logger.info("OTFDFGenerator Execution Started!");
+        if (IS_LOG_ENABLED) {
+            logger.info("OTFDFGenerator Execution Started!");
+        }
 
         Dataset<Row> dataFrame = this.dataFrame;
-        logger.info("🚀 Original DataFrame Schema:");
-        dataFrame.printSchema();
-        logger.info("🚀 Original DataFrame Data:");
-        dataFrame.show(5, false);
-        logger.info("🚀 Original DataFrame Columns: {}", Arrays.toString(dataFrame.columns()));
+        if (dataFrame == null || dataFrame.isEmpty()) {
+            return createEmptyDF(jobContext);
+        }
 
-        Dataset<Row> reportDF = generateReportDF(dataFrame, jobContext);
-        logger.info("🚀 Dataframe Execution Completed!");
-
-        return reportDF;
+        if (IS_LOG_ENABLED) {
+            this.dataFrame.show(25, false);
+            logger.info("++++++++++[KPI EVALUATOR RESULT]++++++++++");
+        }
+        return generateReportDF(dataFrame, jobContext);
     }
 
     private Dataset<Row> generateReportDF(Dataset<Row> dataFrame, JobContext jobContext) {
@@ -68,38 +62,57 @@ public class OTFDFGenerator extends Processor {
             Map<String, String> metaColumnsMap = new ObjectMapper().readValue(metaColumns,
                     new TypeReference<Map<String, String>>() {
                     });
-            logger.info("📊 Meta Columns: {}", metaColumnsMap);
 
             String dynamicQuery = generateDynamicQuery(metaColumnsMap, jobContext);
-            logger.info("📊 Dynamic Query: {}", dynamicQuery);
+
+            if (IS_LOG_ENABLED) {
+                logger.info("Meta Columns: {}", metaColumnsMap);
+                logger.info("Dynamic Query: {}", dynamicQuery);
+            }
 
             dataFrame.createOrReplaceTempView("InputData");
-
             Dataset<Row> stableDataDF = jobContext.sqlctx().sql(dynamicQuery);
-
-            stableDataDF.show(5, false);
-            logger.info("📊 Stable Dataframe Shown Successfully!");
+            if (IS_LOG_ENABLED) {
+                logger.info("Stable Dataframe Created Successfully!");
+            }
 
             List<String> metaColumnKeys = new ArrayList<>(metaColumnsMap.keySet());
-            logger.info("📊 Meta Column Keys: {}", metaColumnKeys);
+            if (IS_LOG_ENABLED) {
+                logger.info("Meta Column Keys: {}", metaColumnKeys);
+            }
 
             List<String> defaultMetaColumnKeys = Arrays.asList("DT", "HR", "COUNTRY", "DL1", "DL2", "DL3", "DL4",
                     "NODENAME");
-            logger.info("📊 Default Meta Column Keys: {}", defaultMetaColumnKeys);
+            if (IS_LOG_ENABLED) {
+                logger.info("Default Meta Column Keys: {}", defaultMetaColumnKeys);
+            }
 
-            List<String> enrichFromNEKeys = metaColumnKeys.stream()
-                    .filter(col -> !defaultMetaColumnKeys.contains(col))
-                    .collect(Collectors.toList());
+            String selectedHeader = jobContext.getParameter("selectedHeader");
+            selectedHeader = selectedHeader == null ? "default" : selectedHeader;
 
-            logger.info("📊 Enrich From NE Keys: {}", enrichFromNEKeys);
+            List<String> enrichFromNEKeys = new ArrayList<>();
+
+            if (selectedHeader.equalsIgnoreCase("default")) {
+                enrichFromNEKeys = new ArrayList<>();
+
+            } else {
+                enrichFromNEKeys = metaColumnKeys.stream()
+                        .filter(col -> !defaultMetaColumnKeys.contains(col))
+                        .collect(Collectors.toList());
+            }
+
+            if (IS_LOG_ENABLED) {
+                logger.info("Enrich From NE Keys: {}", enrichFromNEKeys);
+            }
 
             Dataset<Row> joinedDF = stableDataDF;
 
             if (enrichFromNEKeys.isEmpty()) {
                 joinedDF = stableDataDF;
             } else {
-                // Enrich From NE
-                logger.info("📊 Enrich From NE Keys: {}", enrichFromNEKeys);
+                if (IS_LOG_ENABLED) {
+                    logger.info("Enrich From NE Keys: {}", enrichFromNEKeys);
+                }
 
                 String domain = jobContext.getParameter("DOMAIN");
                 String vendor = jobContext.getParameter("VENDOR");
@@ -116,20 +129,24 @@ public class OTFDFGenerator extends Processor {
                     neQuery = "SELECT * FROM NETWORK_ELEMENT WHERE 1=0";
                 }
 
-                logger.info("📊 NE Query: {}", neQuery);
+                logger.error("NE Query: {}", neQuery);
 
                 Dataset<Row> neDF = getDataFrameFromQuery(neQuery, jobContext);
-                neDF.show(5);
-                logger.info("📊 NE Dataframe Shown Successfully!");
+                if (IS_LOG_ENABLED) {
+                    // neDF.show(5, false);
+                    // logger.info("NE Dataframe Shown Successfully!");
+                }
 
                 joinedDF = stableDataDF.join(
                         neDF,
                         stableDataDF.col("NODENAME").equalTo(neDF.col("NE_NAME")),
                         "left");
 
-                joinedDF.show(5);
-                logger.info("📊 Joined Dataframe Shown Successfully!");
+            }
 
+            if (IS_LOG_ENABLED) {
+                // joinedDF.show(5, false);
+                // logger.info("Joined Dataframe Shown Successfully!");
             }
 
             Dataset<Row> finalDF = generateFinalDataDF(joinedDF, jobContext);
@@ -151,12 +168,9 @@ public class OTFDFGenerator extends Processor {
                 finalDF = finalDF.drop("TIME");
             }
 
-            finalDF.show(5);
-            logger.info("📊 Final Dataframe Shown Successfully!");
-
             return finalDF;
         } catch (Exception e) {
-            logger.error("❌ Error in Generating Report DataFrame, Message: {}, Error: {}", e.getMessage(), e);
+            logger.error("Error In Generating Report DataFrame, Message: {}, Error: {}", e.getMessage(), e);
             return createEmptyDF(jobContext);
         }
     }
@@ -187,24 +201,22 @@ public class OTFDFGenerator extends Processor {
             e.printStackTrace();
         }
 
-        logger.info("📊 Meta Columns Map: {}", metaColumnsMap);
-        logger.info("📊 KPI Code With KPI Name Map: {}", kpiCodeWithKpiNameMap);
-        logger.info("📊 Counter Id With Counter Name Map: {}", counterIdWithCounterNameMap);
+        if (IS_LOG_ENABLED) {
+            logger.info("Meta Columns Map: {}", metaColumnsMap);
+            logger.info("KPI Code With KPI Name Map: {}", kpiCodeWithKpiNameMap);
+            logger.info("Counter Id With Counter Name Map: {}", counterIdWithCounterNameMap);
+        }
 
-        // Combine all column names sequentially
         List<String> allColumns = new ArrayList<>();
         allColumns.addAll(metaColumnsMap.values()); // e.g. DATE, TIME, ...
         allColumns.addAll(kpiCodeWithKpiNameMap.values()); // e.g. 1066-OUTBOUND TRAFFIC (MB), ...
         allColumns.addAll(counterIdWithCounterNameMap.values()); // e.g. 29396-INTERFACE.OUTBOUND_TRAFFIC...
 
-        // Define schema: all columns as nullable strings
         List<StructField> fields = allColumns.stream()
                 .map(colName -> DataTypes.createStructField(colName, DataTypes.StringType, true))
                 .collect(Collectors.toList());
 
         StructType schema = DataTypes.createStructType(fields);
-
-        // Return empty DataFrame with schema
         return jobContext.sqlctx().createDataFrame(new ArrayList<Row>(), schema);
     }
 
@@ -213,7 +225,7 @@ public class OTFDFGenerator extends Processor {
         Map<String, String> jobContextMap = jobContext.getParameters();
 
         String FALLBACK_SPARK_PM_JDBC_DRIVER = "org.mariadb.jdbc.Driver";
-        String FALLBACK_SPARK_PM_JDBC_URL = "jdbc:mysql://mysql-nst-cluster.nstdb.svc.cluster.local:6446/PERFORMANCE_A_LAB?autoReconnect=true";
+        String FALLBACK_SPARK_PM_JDBC_URL = "jdbc:mysql://mysql-nst-cluster.nstdb.svc.cluster.local:6446/PERFORMANCE?autoReconnect=true";
         String FALLBACK_SPARK_PM_JDBC_USERNAME = "PERFORMANCE";
         String FALLBACK_SPARK_PM_JDBC_PASSWORD = "perform!123";
 
@@ -236,7 +248,6 @@ public class OTFDFGenerator extends Processor {
                     ? SPARK_PM_JDBC_PASSWORD
                     : FALLBACK_SPARK_PM_JDBC_PASSWORD;
 
-            // Read data from database using Spark JDBC
             dataFrame = jobContext.sqlctx().read()
                     .format("jdbc")
                     .option("driver", SPARK_PM_JDBC_DRIVER)
@@ -247,7 +258,7 @@ public class OTFDFGenerator extends Processor {
                     .load();
 
         } catch (Exception e) {
-            logger.error("Error in getting DataFrame from query, Message: {}, Error: {}", e.getMessage(), e);
+            logger.error("Error in Getting DataFrame From Query, Message: {}, Error: {}", e.getMessage(), e);
         }
         return dataFrame;
     }
@@ -266,12 +277,9 @@ public class OTFDFGenerator extends Processor {
                     jobContext.getParameter("COUNTER_ID_WITH_COUNTER_NAME_MAP"), new TypeReference<>() {
                     });
 
-            // Register Temp View
             inputDF.createOrReplaceTempView("InputData");
 
             StringBuilder sql = new StringBuilder("SELECT ");
-
-            // Use Column Name with Aliases, Escape Numbers
             Consumer<Map<String, String>> appendCols = (map) -> {
                 map.forEach((key, alias) -> {
                     if (key.matches("\\d+")) {
@@ -285,19 +293,19 @@ public class OTFDFGenerator extends Processor {
             appendCols.accept(metaColumnsMap);
             appendCols.accept(kpiMap);
             appendCols.accept(counterMap);
-
-            // Remove Trailing Comma
             if (sql.length() >= 2) {
                 sql.setLength(sql.length() - 2);
             }
 
             String finalSql = sql.toString() + " FROM InputData";
-            logger.info("📊 Final SQL: {}", finalSql);
+            if (IS_LOG_ENABLED) {
+                logger.info("Final SQL: {}", finalSql);
+            }
 
             return inputDF.sparkSession().sql(finalSql);
 
         } catch (Exception e) {
-            logger.error("❌ Error generating final DataFrame using SQL", e);
+            logger.error("Error Generating Final DataFrame Using SQL", e);
             return createEmptyDF(jobContext);
         }
     }
@@ -306,29 +314,44 @@ public class OTFDFGenerator extends Processor {
 
         List<String> metaColumnKeys = new ArrayList<>(
                 metaColumnsMap.keySet().stream().map(String::toUpperCase).collect(Collectors.toList()));
-        logger.info("📊 Meta Column Keys: {}", metaColumnKeys);
+        if (IS_LOG_ENABLED) {
+            logger.info("Meta Column Keys: {}", metaColumnKeys);
+        }
 
         List<String> defaultMetaColumnKeys = Arrays.asList("DT", "HR", "COUNTRY", "DL1", "DL2", "DL3", "DL4",
                 "NODENAME");
-        logger.info("📊 Default Meta Column Keys: {}", defaultMetaColumnKeys);
+        if (IS_LOG_ENABLED) {
+            logger.info("Default Meta Column Keys: {}", defaultMetaColumnKeys);
+        }
 
         List<String> enrichFromNEKeys = metaColumnKeys.stream()
                 .filter(col -> !defaultMetaColumnKeys.contains(col))
                 .collect(Collectors.toList());
 
-        logger.info("📊 Fields to Enrich from NE: {}", enrichFromNEKeys);
-
-        // String reportLevel = jobContext.getParameter("REPORT_LEVEL");
         String reportLevel = jobContext.getParameter("AGGREGATION_LEVEL");
-        // reportLevel = reportLevel.toUpperCase();
-        // reportLevel = "NAM";
+        if (IS_LOG_ENABLED) {
+            logger.info("Fields to Enrich from NE: {}", enrichFromNEKeys);
+            logger.info("Report Level: {}", reportLevel);
+        }
 
         String dynamicQuery = "SELECT ";
 
         switch (reportLevel) {
-            case "L0":
-                dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, '-' AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, 'INDIA' AS NODENAME";
-                break;
+            case "L0": {
+
+                if (jobContext.getParameter("CUSTOM_INDIA_LEVEL").equalsIgnoreCase("TRUE")) {
+
+                    String nodename = jobContext.getParameter("CUSTOM_OR_POLYGON_NAME");
+                    nodename = nodename == null ? "Custom" : nodename;
+                    dynamicQuery += "DATE AS DT, TIME AS HR, '-' AS COUNTRY, '-' AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, '$nodename' AS NODENAME";
+                    dynamicQuery = dynamicQuery.replace("$nodename", nodename);
+                    break;
+
+                } else {
+                    dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, '-' AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, 'INDIA' AS NODENAME";
+                    break;
+                }
+            }
             case "L1":
                 dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, '-' AS DL2, '-' AS DL3, '-' AS DL4, ENTITY_NAME AS NODENAME";
                 break;
@@ -351,19 +374,6 @@ public class OTFDFGenerator extends Processor {
                 dynamicQuery += "DATE AS DT, TIME AS HR, 'INDIA' AS COUNTRY, UPPER(L1) AS DL1, UPPER(L2) AS DL2, UPPER(L3) AS DL3, UPPER(L4) AS DL4, UPPER(ENTITY_NAME) AS NODENAME";
                 break;
         }
-        // String kpiCodeList = jobContext.getParameter("KPI_CODE_LIST");
-        // kpiCodeList = kpiCodeList.replace("[", "").replace("]", "");
-        // String[] kpiCodeArray = kpiCodeList.split(",");
-        // for (String kpiCode : kpiCodeArray) {
-        // dynamicQuery += ", " + kpiCode.trim();
-        // }
-
-        // String counterIdList = jobContext.getParameter("COUNTER_ID_LIST");
-        // counterIdList = counterIdList.replace("[", "").replace("]", "");
-        // String[] counterIdArray = counterIdList.split(",");
-        // for (String counterId : counterIdArray) {
-        // dynamicQuery += ", " + counterId.trim();
-        // }
 
         String kpiCodeCommaSeparated = jobContext.getParameter("KPI_CODE_COMMA_SEPARATED");
         String counterIdCommaSeparated = jobContext.getParameter("COUNTER_ID_COMMA_SEPARATED");

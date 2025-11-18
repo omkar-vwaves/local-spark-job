@@ -2,6 +2,7 @@ package com.enttribe.pm.job.alert.loop;
 
 import com.enttribe.sparkrunner.processors.Processor;
 
+import java.io.Serializable;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -39,6 +40,18 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import java.util.Properties;
 import java.util.concurrent.Future;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
+import org.apache.spark.api.java.function.ForeachPartitionFunction;
+import org.apache.spark.api.java.function.MapFunction;
+import org.apache.spark.sql.*;
+import static org.apache.spark.sql.functions.*;
+import static org.apache.spark.sql.functions.col;
+import org.apache.spark.sql.api.java.UDF1;
+import org.apache.spark.sql.types.DataTypes;
 
 public class ProcessCloseCQLResult extends Processor {
 
@@ -65,10 +78,6 @@ public class ProcessCloseCQLResult extends Processor {
     private static String sparkPMJdbcUrl = null;
     private static String sparkPMJdbcUsername = null;
     private static String sparkPMJdbcPassword = null;
-    private static String sparkFMJdbcDriver = null;
-    private static String sparkFMJdbcUrl = null;
-    private static String sparkFMJdbcUsername = null;
-    private static String sparkFMJdbcPassword = null;
     private static String sparkCassandraKeyspacePM = null;
     private static String sparkCassandraHost = null;
     private static String sparkCassandraPort = null;
@@ -92,61 +101,50 @@ public class ProcessCloseCQLResult extends Processor {
     @Override
     public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) throws Exception {
 
-        if (this.dataFrame == null || this.dataFrame.isEmpty()) {
-            return this.dataFrame;
-        }
+        logger.info("ProcessCloseCQLResult Execution Started! (Updated-03 NOV 06:15 PM)");
 
         long startTime = System.currentTimeMillis();
 
-        logger.info("[ProcessCloseCQLResult] Execution Started!");
+        String CURRENT_COUNT = jobContext.getParameter("CURRENT_COUNT");
+        logger.info("[ProcessCloseCQLResult={}] Execution Started!", CURRENT_COUNT);
+
+        if (this.dataFrame == null || this.dataFrame.isEmpty()) {
+            logger.info("[ProcessCloseCQLResult={}] Input DataFrame is NULL or EMPTY. Skipping ProcessOpenCQLResult!",
+                    CURRENT_COUNT);
+            return this.dataFrame;
+        }
 
         jobContextMap = jobContext.getParameters();
+        String kafkaTopicName = jobContextMap.get("KAFKA_TOPIC_NAME");
+        String kafkaBroker = jobContextMap.get("SPARK_KAFKA_BROKER_ANSIBLE");
+        if (kafkaTopicName == null || kafkaTopicName.isEmpty()) {
+            kafkaTopicName = "pm.alerts.fault";
+            jobContextMap.put("KAFKA_TOPIC_NAME", kafkaTopicName);
+        }
+        if (kafkaBroker == null || kafkaBroker.isEmpty()) {
+            kafkaBroker = "enttribe-kafka-0.enttribe-kafka-headless.ansible.svc.cluster.local:32392";
+            jobContextMap.put("SPARK_KAFKA_BROKER_ANSIBLE", kafkaBroker);
+        }
 
-        sparkPMJdbcDriver = jobContextMap.get(SPARK_PM_JDBC_DRIVER);
-        sparkPMJdbcUrl = jobContextMap.get(SPARK_PM_JDBC_URL);
-        sparkPMJdbcUsername = jobContextMap.get(SPARK_PM_JDBC_USERNAME);
-        sparkPMJdbcPassword = jobContextMap.get(SPARK_PM_JDBC_PASSWORD);
-        sparkFMJdbcDriver = jobContextMap.get(SPARK_FM_JDBC_DRIVER);
-        sparkFMJdbcUrl = jobContextMap.get(SPARK_FM_JDBC_URL);
-        sparkFMJdbcUsername = jobContextMap.get(SPARK_FM_JDBC_USERNAME);
-        sparkFMJdbcPassword = jobContextMap.get(SPARK_FM_JDBC_PASSWORD);
-        sparkCassandraKeyspacePM = jobContextMap.get(SPARK_CASSANDRA_KEYSPACE_PM);
-        sparkCassandraHost = jobContextMap.get(SPARK_CASSANDRA_HOST);
-        sparkCassandraPort = jobContextMap.get(SPARK_CASSANDRA_PORT);
-        sparkCassandraDatacenter = jobContextMap.get(SPARK_CASSANDRA_DATACENTER);
-        sparkCassandraUsername = jobContextMap.get(SPARK_CASSANDRA_USERNAME);
-        sparkCassandraPassword = jobContextMap.get(SPARK_CASSANDRA_PASSWORD);
-
+        initializeCredentials(jobContextMap);
         jobContext = setSparkConf(jobContext);
-        logger.info("PM JDBC Credentials: Driver={}, URL={}, User={}, Password={}",
-                sparkPMJdbcDriver,
-                sparkPMJdbcUrl,
-                sparkPMJdbcUsername,
-                sparkPMJdbcPassword);
+        logger.info("[ProcessOpenCQLResult={}] PM JDBC Credentials: Driver={}, URL={}, User={}, Password={}",
+                CURRENT_COUNT,
+                sparkPMJdbcDriver, sparkPMJdbcUrl, sparkPMJdbcUsername, sparkPMJdbcPassword);
 
-        logger.info("FM JDBC Credentials: Driver={}, URL={}, User={}, Password={}",
-                sparkFMJdbcUrl,
-                sparkFMJdbcDriver,
-                sparkFMJdbcUsername,
-                sparkFMJdbcPassword);
+        logger.info(
+                "[ProcessOpenCQLResult={}] Cassandra Credentials: Keyspace={}, Host={}, Port={}, Datacenter={}, Username={}, Password={}",
+                CURRENT_COUNT, sparkCassandraKeyspacePM, sparkCassandraHost, sparkCassandraPort,
+                sparkCassandraDatacenter, sparkCassandraUsername, sparkCassandraPassword);
 
-        logger.info("Cassandra Credentials: Keyspace={}, Host={}, Port={}, Datacenter={}, Username={}, Password={}",
-                sparkCassandraKeyspacePM,
-                sparkCassandraHost,
-                sparkCassandraPort,
-                sparkCassandraDatacenter,
-                sparkCassandraUsername,
-                sparkCassandraPassword);
-
+        // this.dataFrame.filter("nodename =
+        // '11.11.11.001'").createOrReplaceTempView("CQLResult");
         this.dataFrame.createOrReplaceTempView("CQLResult");
 
         String aggregationLevel = jobContextMap.get("aggregationLevel");
         String timestamp = jobContextMap.get("TIMESTAMP");
 
         logger.info("Processing Timestamp: {} | Aggregation Level: {}", timestamp, aggregationLevel);
-
-        String CURRENT_COUNT = jobContext.getParameter("CURRENT_COUNT");
-        logger.info("[ProcessCloseCQLResult] CURRENT_COUNT={}", CURRENT_COUNT);
 
         String inputConfig = null;
         String extractedParameters = null;
@@ -174,6 +172,7 @@ public class ProcessCloseCQLResult extends Processor {
         Map<String, String> finalMap = new HashMap<>();
 
         finalMap.putAll(inputConfigMap);
+
         finalMap.putAll(nodeAndAggregationDetailsMap);
         finalMap.putAll(extraParametersMap);
         extraParametersMap.putAll(kpiCodeNameMap);
@@ -182,27 +181,53 @@ public class ProcessCloseCQLResult extends Processor {
         logger.info("[ProcessCloseCQLResult] Input Config Map: {}", inputConfigMap);
         logger.info("[ProcessCloseCQLResult] Node And Aggregation Details Map: {}", nodeAndAggregationDetailsMap);
         logger.info("[ProcessCloseCQLResult] Extra Parameters Map: {}", extraParametersMap);
-        logger.info("[ProcessCloseCQLResult] KPI Code Name Map: {}", extraParametersMap);
+        logger.info("[ProcessCloseCQLResult] KPI Code Name Map: {}", kpiCodeNameMap);
+        String ruleType = extraParametersMap.getOrDefault("RULE_TYPE", "STATIC_EXPRESSION");
+        if (ruleType.equalsIgnoreCase("TREND_RULE") || ruleType.equalsIgnoreCase("PERCENTAGE")) {
+            if (this.dataFrame != null && !this.dataFrame.isEmpty()) {
+                proceedWithTrendRule(jobContext, finalMap, extraParametersMap, aggregationLevel, this.dataFrame,
+                        CURRENT_COUNT);
+            }
+            return this.dataFrame;
+        }
 
         String cqlQuery = buildCQLQuery(finalMap, aggregationLevel, jobContext);
         logger.info("CQL Query On InputDF : {}", cqlQuery);
 
         Dataset<Row> cqlResultDF = jobContext.sqlctx().sql(cqlQuery);
-        cqlResultDF.show(false);
 
-        List<Row> rowList = cqlResultDF.collectAsList();
+        // Round all KPI columns to 4 decimals before any further processing
+        List<String> initialKpiColumns = getKPIColumns(cqlResultDF);
+        for (String colName : initialKpiColumns) {
+            cqlResultDF = cqlResultDF.withColumn(colName, round(col(colName), 4));
+        }
 
-        if (rowList.isEmpty()) {
+        if (cqlResultDF.isEmpty()) {
             logger.info(
-                    "No Data Found in Cassandra for the Given Filter Conditions. Skipping Alert Generation Process!");
+                    "[ProcessCloseCQLResult={}] No Data Found in Cassandra for the Given Filter Conditions. Skipping Alert Generation Process!",
+                    CURRENT_COUNT);
             return this.dataFrame;
         }
 
+        final Map<String, String> extraParametersMapFinal = new HashMap<>(extraParametersMap);
+        final Map<String, String> inputConfigMapFinal = new HashMap<>(inputConfigMap);
+        final JobContext jobContextFinal = jobContext;
+
+        List<Row> cqlRows = cqlResultDF.collectAsList();
+        logger.info("[ProcessCloseCQLResult={}] Collected Rows={}", CURRENT_COUNT, cqlRows.size());
+
         int rowNumber = 1;
-        for (Row row : rowList) {
-            logger.info("Processing CQL {} With Nodename: {}", rowNumber, row.getAs("nodename"));
-            processEachCQLRow(row, extraParametersMap, jobContext, inputConfigMap);
-            logger.info("Processing CQL {} With Nodename: {} Completed!", rowNumber++, row.getAs("nodename"));
+        for (Row row : cqlRows) {
+            if (rowNumber <= 3 || rowNumber % 1000 == 0) {
+                logger.info("[ProcessCloseCQLResult={}] Processing CQL {} With Nodename: {}", CURRENT_COUNT, rowNumber,
+                        row.getAs("nodename"));
+            }
+            processEachCQLRow(row, extraParametersMapFinal, jobContextFinal, inputConfigMapFinal);
+            if (rowNumber <= 3 || rowNumber % 1000 == 0) {
+                logger.info("[ProcessCloseCQLResult={}] Processing CQL {} With Nodename: {} Completed!", CURRENT_COUNT,
+                        rowNumber, row.getAs("nodename"));
+            }
+            rowNumber++;
         }
 
         long endTime = System.currentTimeMillis();
@@ -210,9 +235,509 @@ public class ProcessCloseCQLResult extends Processor {
         long minutes = durationMillis / 60000;
         long seconds = (durationMillis % 60000) / 1000;
 
-        logger.info("[ProcessCloseCQLResult] Execution Completed! Time Taken: {} Minutes | {} Seconds", minutes,
+        logger.info("[ProcessCloseCQLResult={}] Execution Completed! Time Taken: {} Minutes | {} Seconds",
+                CURRENT_COUNT,
+                minutes,
                 seconds);
         return this.dataFrame;
+    }
+
+    private static void initializeCredentials(Map<String, String> jobContextMap) {
+        sparkPMJdbcDriver = jobContextMap.get(SPARK_PM_JDBC_DRIVER);
+        sparkPMJdbcUrl = jobContextMap.get(SPARK_PM_JDBC_URL);
+        sparkPMJdbcUsername = jobContextMap.get(SPARK_PM_JDBC_USERNAME);
+        sparkPMJdbcPassword = jobContextMap.get(SPARK_PM_JDBC_PASSWORD);
+        sparkCassandraKeyspacePM = jobContextMap.get(SPARK_CASSANDRA_KEYSPACE_PM);
+        sparkCassandraHost = jobContextMap.get(SPARK_CASSANDRA_HOST);
+        sparkCassandraPort = jobContextMap.get(SPARK_CASSANDRA_PORT);
+        sparkCassandraDatacenter = jobContextMap.get(SPARK_CASSANDRA_DATACENTER);
+        sparkCassandraUsername = jobContextMap.get(SPARK_CASSANDRA_USERNAME);
+        sparkCassandraPassword = jobContextMap.get(SPARK_CASSANDRA_PASSWORD);
+    }
+
+    private static void proceedWithTrendRule(JobContext jobContext,
+            Map<String, String> finalMap,
+            Map<String, String> extraParametersMap,
+            String aggregationLevel,
+            Dataset<Row> inputDataset,
+            String CURRENT_COUNT) {
+
+        String timestamp = jobContext.getParameter("TIMESTAMP");
+        String expression = extraParametersMap.get("EXPRESSION");
+        String function = extraParametersMap.get("FUNCTION");
+        logger.info("Input Parameters - Timestamp={}, Expression={}, Function={}", timestamp, expression, function);
+
+        String cqlQuery = buildCQLQuery(finalMap, aggregationLevel, jobContext);
+        logger.info("CQL Query On InputDF : {}", cqlQuery);
+
+        Dataset<Row> cqlResultDF = jobContext.sqlctx().sql(cqlQuery);
+        cqlResultDF = cqlResultDF.withColumn("nodename",
+                when(col("nodename").isNull().or(trim(col("nodename")).equalTo(""))
+                        .or(trim(col("nodename")).equalTo("null")),
+                        when(col("ENTITY_ID").isNotNull().and(trim(col("ENTITY_ID")).notEqual("")), col("ENTITY_ID"))
+                                .otherwise(
+                                        when(col("ENTITY_NAME").isNotNull().and(trim(col("ENTITY_NAME")).notEqual("")),
+                                                col("ENTITY_NAME"))
+                                                .otherwise(lit("-"))))
+                        .otherwise(col("nodename")));
+
+        Dataset<Row> equalsDF = filterByTimestamp(cqlResultDF, timestamp, true);
+        Dataset<Row> notEqualsDF = filterByTimestamp(cqlResultDF, timestamp, false);
+
+        // Added +2% For Testing - Need to Remove
+        // for (String colName : equalsDF.columns()) {
+        // if (colName.startsWith("kpijson")) {
+        // equalsDF = equalsDF.withColumn(
+        // colName,
+        // col(colName).plus(col(colName).multiply(0.04)).alias(colName));
+        // }
+        // }
+
+        List<String> kpiColumns = getKPIColumns(notEqualsDF);
+        Dataset<Row> aggDF = computeKPIAggregates(notEqualsDF, kpiColumns, function);
+        Dataset<Row> joinedDF = joinWithAggregates(equalsDF, aggDF);
+
+        ExpressionData exprData = parseKPIExpression(expression);
+        logger.info("Parsed Expression - KPI Codes: {}, Operators: {}, Percentages: {}",
+                exprData.kpiCodes, exprData.operators, exprData.percentages);
+
+        Dataset<Row> resultDF = applyDynamicTrendRule(joinedDF, exprData, function);
+        String aggFunction = extraParametersMap.getOrDefault("FUNCTION", "AVG");
+        String upperAggFunction = aggFunction.toUpperCase();
+        String aggPrefix = upperAggFunction + "_";
+
+        List<String> keyColumns = new ArrayList<>();
+        keyColumns.add("nodename");
+        keyColumns.add("timestamp");
+        for (String code : exprData.kpiCodes) {
+            keyColumns.add("kpijson[" + code + "]");
+            keyColumns.add(aggPrefix + "kpijson[" + code + "]");
+            keyColumns.add("cond_" + code);
+            keyColumns.add("pctChange_" + code);
+        }
+
+        Dataset<Row> validatedDF = applyExpressionValidation(resultDF, exprData, expression);
+        validatedDF.show(110, false);
+        logger.info("++++++++++++[VALIDATED DF]++++++++++++");
+
+        Map<String, String> map = new LinkedHashMap<>();
+        map.putAll(finalMap);
+        map.putAll(extraParametersMap);
+        Dataset<AlarmWrapper> alarmWrapper = generateAlarmWrapper(validatedDF, map, exprData.kpiCodes, CURRENT_COUNT);
+
+        String kafkaBroker = jobContextMap.get("SPARK_KAFKA_BROKER_ANSIBLE");
+        kafkaBroker = (kafkaBroker == null || kafkaBroker.isEmpty())
+                ? "enttribe-kafka-0.enttribe-kafka-headless.ansible.svc.cluster.local:32392"
+                : kafkaBroker;
+        produceMessages(alarmWrapper, kafkaBroker);
+    }
+
+    private static Dataset<AlarmWrapper> generateAlarmWrapper(Dataset<Row> validatedDF,
+            Map<String, String> map,
+            List<String> kpiCodes, String CURRENT_COUNT) {
+
+        Dataset<Row> alertRows = validatedDF.filter(functions.col("result").equalTo(1));
+        logger.info("[ProcessOpenCQLResult={}] Breached Rows Count: {}", CURRENT_COUNT, alertRows.count());
+        logger.info("[ProcessOpenCQLResult={}] Not Breached Rows Count: {}", CURRENT_COUNT,
+                validatedDF.count() - alertRows.count());
+
+        String function = map.getOrDefault("FUNCTION", "AVG");
+        String upperFunction = function.toUpperCase();
+        String aggPrefix = upperFunction + "_";
+
+        Dataset<AlarmWrapper> alarmWrappers = alertRows.map((MapFunction<Row, AlarmWrapper>) row -> {
+
+            AlarmWrapper alarmWrapper = new AlarmWrapper();
+            Object tsObj = row.getAs("timestamp");
+            Long epochMillis = null;
+            if (tsObj instanceof java.sql.Timestamp) {
+                epochMillis = ((java.sql.Timestamp) tsObj).getTime();
+            } else if (tsObj instanceof String) {
+                epochMillis = toEpochMillis((String) tsObj);
+            } else if (tsObj instanceof Long) {
+                epochMillis = (Long) tsObj;
+            }
+            alarmWrapper.setOpenTime(epochMillis);
+            alarmWrapper.setChangeTime(epochMillis);
+            alarmWrapper.setReportingTime(epochMillis);
+
+            alarmWrapper.setAlarmExternalId(map.get("ALARM_EXTERNAL_ID"));
+            alarmWrapper.setAlarmCode(map.get("ALARM_CODE"));
+            alarmWrapper.setAlarmName(map.get("ALARM_NAME"));
+            alarmWrapper.setSeverity("cleared");
+            alarmWrapper.setActualSeverity(map.get("ACTUAL_SEVERITY"));
+            alarmWrapper.setDomain(map.get("DOMAIN"));
+            alarmWrapper.setVendor(map.get("VENDOR"));
+            alarmWrapper.setSenderName(map.get("SENDER_NAME"));
+            alarmWrapper.setTechnology(map.get("TECHNOLOGY"));
+            alarmWrapper.setClassification(map.get("CLASSIFICATION"));
+            alarmWrapper.setProbableCause(map.get("EXPRESSION"));
+            alarmWrapper.setDescription(map.get("DESCRIPTION"));
+            alarmWrapper.setAlarmGroup(map.get("ALARM_GROUP"));
+            alarmWrapper.setServiceAffected(safeParseBoolean(map, "SERVICE_AFFECTING"));
+            alarmWrapper.setManualCloseable(safeParseBoolean(map, "MANUALLY_CLOSEABLE"));
+            alarmWrapper.setCorrelationFlag(safeParseBoolean(map, "CORRELATION_FLAG"));
+            alarmWrapper.setSenderIp("-");
+            alarmWrapper.setEntityStatus("-");
+            String kafkaTopicName = jobContextMap.get("KAFKA_TOPIC_NAME");
+            kafkaTopicName = (kafkaTopicName == null || kafkaTopicName.isEmpty()) ? "pm.alerts.fault" : kafkaTopicName;
+            alarmWrapper.setKafkaTopicName(kafkaTopicName);
+
+            alarmWrapper.setEventType(getSafeString(row, "ENTITY_TYPE"));
+            alarmWrapper.setEntityType(getSafeString(row, "ENTITY_TYPE"));
+            alarmWrapper.setEntityId(getSafeString(row, "ENTITY_ID"));
+            alarmWrapper.setEntityName(getSafeString(row, "ENTITY_NAME"));
+            alarmWrapper.setLocationId(getSafeString(row, "ENTITY_NAME"));
+            alarmWrapper.setSubentity(getSafeString(row, "SUBENTITY"));
+            alarmWrapper.setNeCategory(getSafeString(row, "ENTITY_TYPE"));
+
+            alarmWrapper.setGeographyL1Name(getSafeString(row, "L1"));
+            alarmWrapper.setGeographyL2Name(getSafeString(row, "L2"));
+            alarmWrapper.setGeographyL3Name(getSafeString(row, "L3"));
+            alarmWrapper.setGeographyL4Name(getSafeString(row, "L4"));
+
+            alarmWrapper.setLatitude(null);
+            alarmWrapper.setLongitude(null);
+
+            String expression = getSafeString(row, "original_exp");
+            if (expression != null) {
+                expression = expression.trim();
+                expression = expression.replaceAll(
+                        "(?i)^IF\\s*\\(\\s*\\(?\\s*(.*?)\\s*\\)?\\s*,\\s*1\\s*,\\s*0\\s*\\)\\s*$",
+                        "$1");
+                expression = expression.replace("IF(", "");
+                expression = expression.replace(", 1, 0)", "");
+            }
+            String bufferWindow = map.getOrDefault("BUFFER_WINDOW", "1");
+
+            StringBuilder additionalDetail = new StringBuilder();
+            additionalDetail.append("Expression=").append(expression)
+                    .append(", Buffer Window=").append(bufferWindow);
+
+            java.util.LinkedHashSet<String> uniqueCodes = new java.util.LinkedHashSet<>(kpiCodes);
+            for (String kpiCode : uniqueCodes) {
+                String label = map.get(kpiCode);
+                String kpiDisplay = (label != null && !label.trim().isEmpty()) ? (label) : kpiCode;
+
+                Double currentValue = getSafeDouble(row, "kpijson[" + kpiCode + "]");
+                Double bufferValue = getSafeDouble(row, aggPrefix + "kpijson[" + kpiCode + "]");
+                Double percentChange = getSafeDouble(row, "pctChange_" + kpiCode);
+
+                String currentValStr = currentValue != null ? String.format("%.4f", currentValue) : "NA";
+                String bufferValStr = bufferValue != null ? String.format("%.4f", bufferValue) : "NA";
+                String pctStr = percentChange != null ? String.format("%.4f", percentChange) : "NA";
+
+                additionalDetail.append(", ")
+                        .append(kpiDisplay)
+                        .append("={Current Value=").append(currentValStr)
+                        .append(" ").append(upperFunction).append("(Buffer)=").append(bufferValStr)
+                        .append(" Percentage Change=").append(pctStr).append("%}");
+            }
+
+            alarmWrapper.setAdditionalDetail(additionalDetail.toString());
+
+            return alarmWrapper;
+
+        }, Encoders.bean(AlarmWrapper.class));
+
+        return alarmWrappers;
+    }
+
+    private static String getSafeString(Row row, String colName) {
+        Object val = row.getAs(colName);
+        return val != null ? val.toString() : null;
+    }
+
+    private static Double getSafeDouble(Row row, String colName) {
+        Object val = row.getAs(colName);
+        if (val instanceof Double)
+            return (Double) val;
+        if (val instanceof Float)
+            return ((Float) val).doubleValue();
+        if (val instanceof Long)
+            return ((Long) val).doubleValue();
+        if (val instanceof Integer)
+            return ((Integer) val).doubleValue();
+        if (val instanceof String)
+            return Double.parseDouble((String) val);
+        return null;
+    }
+
+    private static Dataset<Row> filterByTimestamp(Dataset<Row> df, String timestamp, boolean equals) {
+        if (equals)
+            return df.filter(col("timestamp").equalTo(lit(timestamp)));
+        else
+            return df.filter(col("timestamp").notEqual(lit(timestamp)));
+    }
+
+    private static List<String> getKPIColumns(Dataset<Row> df) {
+        List<String> kpiColumns = Arrays.stream(df.columns())
+                .filter(c -> c.startsWith("kpijson"))
+                .collect(Collectors.toList());
+        logger.info("KPI Columns: {}", kpiColumns);
+        return kpiColumns;
+    }
+
+    private static Dataset<Row> computeKPIAggregates(Dataset<Row> df, List<String> kpiColumns, String function) {
+
+        List<Column> aggExprs = new ArrayList<>();
+        if (function == null || function.isEmpty()) {
+            function = "AVG";
+        }
+
+        String upperFunction = function.toUpperCase();
+
+        for (String colName : kpiColumns) {
+            Column aggExpr;
+            switch (upperFunction) {
+                case "MAX":
+                    aggExpr = round(max(col(colName)), 4).alias("MAX_" + colName);
+                    break;
+                case "MIN":
+                    aggExpr = round(min(col(colName)), 4).alias("MIN_" + colName);
+                    break;
+                case "SUM":
+                    aggExpr = round(sum(col(colName)), 4).alias("SUM_" + colName);
+                    break;
+                case "AVG":
+                default:
+                    aggExpr = round(avg(col(colName)), 4).alias("AVG_" + colName);
+                    break;
+            }
+            aggExprs.add(aggExpr);
+        }
+
+        return df.groupBy("nodename")
+                .agg(aggExprs.get(0), aggExprs.subList(1, aggExprs.size()).toArray(new Column[0]));
+    }
+
+    private static Dataset<Row> joinWithAggregates(Dataset<Row> df, Dataset<Row> aggDF) {
+        Dataset<Row> joinedDF = df.join(aggDF, df.col("nodename").equalTo(aggDF.col("nodename")), "left");
+        return joinedDF.drop(aggDF.col("nodename"));
+    }
+
+    private static class ExpressionData implements Serializable {
+        private static final long serialVersionUID = 1L;
+
+        List<String> kpiCodes;
+        List<String> operators;
+        List<Double> percentages;
+
+        ExpressionData(List<String> codes, List<String> ops, List<Double> pct) {
+            this.kpiCodes = codes;
+            this.operators = ops;
+            this.percentages = pct;
+        }
+    }
+
+    private static ExpressionData parseKPIExpression(String expression) {
+
+        logger.info("Parsing KPI Expression: {}", expression);
+
+        // Support form: "...KPI#<code>)...)+ <op> <number>[%?]"
+        // Constraints now: no space between trailing ')' and operator; exactly one
+        // space between operator and number
+        Pattern kpiPattern = Pattern.compile("KPI#(\\d+)\\)*(\\+/-|[+\\-]) (\\d+(?:\\.\\d+)?)%?");
+        Matcher matcher = kpiPattern.matcher(expression);
+
+        List<String> kpiCodes = new ArrayList<>();
+        List<String> operators = new ArrayList<>();
+        List<Double> percentages = new ArrayList<>();
+
+        while (matcher.find()) {
+            kpiCodes.add(matcher.group(1));
+            operators.add(matcher.group(2));
+            percentages.add(Double.parseDouble(matcher.group(3)));
+        }
+
+        logger.info("Parsed KPI Expression='{}' -> Codes: {}, Operators: {}, Percentages: {}",
+                expression, kpiCodes, operators, percentages);
+
+        return new ExpressionData(kpiCodes, operators, percentages);
+    }
+
+    private static Dataset<Row> applyDynamicTrendRule(Dataset<Row> joinedDF,
+            ExpressionData exprData,
+            String function) {
+
+        Dataset<Row> df = joinedDF;
+        // Use the function parameter passed from the calling method
+        if (function == null || function.isEmpty()) {
+            function = "AVG";
+        }
+        String upperFunction = function.toUpperCase();
+        String aggPrefix = upperFunction + "_";
+        Map<String, Integer> codeCountMap = new HashMap<>();
+        Map<String, Integer> totalCountMap = new HashMap<>();
+        for (String c : exprData.kpiCodes) {
+            totalCountMap.put(c, totalCountMap.getOrDefault(c, 0) + 1);
+        }
+
+        for (int i = 0; i < exprData.kpiCodes.size(); i++) {
+            String code = exprData.kpiCodes.get(i);
+            String op = exprData.operators.get(i);
+            double pct = exprData.percentages.get(i) / 100.0;
+
+            logger.info("Processing KPI#{}: operator='{}', percentage={}%, function={}", code, op,
+                    exprData.percentages.get(i), upperFunction);
+
+            Column currentValCol = round(col("kpijson[" + code + "]"), 4);
+            Column bufferValCol = round(col(aggPrefix + "kpijson[" + code + "]"), 4);
+
+            Column percentChangeRaw = when(bufferValCol.isNull(), lit(null))
+                    .when(bufferValCol.equalTo(0).and(currentValCol.equalTo(0)), lit(0))
+                    .when(bufferValCol.equalTo(0), lit(100))
+                    .otherwise(
+                            currentValCol.minus(bufferValCol)
+                                    .divide(bufferValCol)
+                                    .multiply(100));
+            Column percentChangeCol = round(percentChangeRaw, 4).alias("pctChange_" + code);
+
+            Column conditionCol;
+            if (pct == 0.0) {
+                switch (op) {
+                    case "+" -> conditionCol = currentValCol.geq(bufferValCol);
+                    case "-" -> conditionCol = currentValCol.leq(bufferValCol);
+                    case "+/-" -> conditionCol = currentValCol.notEqual(bufferValCol);
+                    default -> conditionCol = lit(false);
+                }
+            } else {
+                switch (op) {
+                    case "+" -> conditionCol = currentValCol.geq(round(bufferValCol.multiply(1 + pct), 4));
+                    case "-" -> conditionCol = currentValCol.leq(round(bufferValCol.multiply(1 - pct), 4));
+                    case "+/-" -> conditionCol = currentValCol.leq(round(bufferValCol.multiply(1 - pct), 4))
+                            .or(currentValCol.geq(round(bufferValCol.multiply(1 + pct), 4)));
+                    default -> conditionCol = lit(false);
+                }
+            }
+            int occ = codeCountMap.getOrDefault(code, 0) + 1;
+            codeCountMap.put(code, occ);
+            int total = totalCountMap.getOrDefault(code, 0);
+            String condColName = (total == 1) ? ("cond_" + code) : ("cond_" + code + "_" + occ);
+            df = df.withColumn(condColName, conditionCol)
+                    .withColumn("pctChange_" + code, percentChangeCol);
+        }
+
+        logger.info("Added columns for KPI codes: {}", exprData.kpiCodes);
+        return df;
+    }
+
+    private static Dataset<Row> applyExpressionValidation(
+            Dataset<Row> df,
+            ExpressionData exprData,
+            String expression) {
+
+        logger.info("Applying Expression Validation: {}", expression);
+        logger.info("Expression Data: {}", exprData);
+        final String originalExp = expression;
+        String replacedExp = originalExp;
+        Map<String, Integer> replaceCountMap = new HashMap<>();
+        Map<String, Integer> totalCountMap = new HashMap<>();
+        for (String c : exprData.kpiCodes) {
+            totalCountMap.put(c, totalCountMap.getOrDefault(c, 0) + 1);
+        }
+        for (int i = 0; i < exprData.kpiCodes.size(); i++) {
+            String code = exprData.kpiCodes.get(i);
+            String op = exprData.operators.get(i);
+            double pctDouble = exprData.percentages.get(i);
+            int pctInt = (int) pctDouble;
+
+            logger.info("Processing KPI#{}: operator='{}', percentage={}%", code, op, pctDouble);
+
+            String opQuoted = Pattern.quote(op);
+            // Build a decimal pattern that eats the full number including decimals (up to
+            // 4)
+            BigDecimal bd = BigDecimal.valueOf(pctDouble).setScale(4, RoundingMode.HALF_UP).stripTrailingZeros();
+            String pctStrExact = Pattern.quote(bd.toPlainString());
+            String numberAlt = "(?:" + pctStrExact + "|" + pctInt + "(?:\\.\\d{1,4})?)";
+            String tightPattern = "KPI#" + code + "\\)+" + opQuoted + "\\s+" + numberAlt + "%?";
+            String loosePattern = "KPI#" + code + "[)\\s]*" + opQuoted + "\\s+" + numberAlt + "%?";
+
+            int occ = replaceCountMap.getOrDefault(code, 0) + 1;
+            replaceCountMap.put(code, occ);
+            int total = totalCountMap.getOrDefault(code, 0);
+            String condName = (total == 1) ? ("cond_" + code) : ("cond_" + code + "_" + occ);
+            String replacement = "(" + condName + ")";
+
+            logger.info("UsingTight Pattern: {}", tightPattern);
+            logger.info("Using Loose Pattern: {}", loosePattern);
+            logger.info("Replacement: {}", replacement);
+
+            replacedExp = replacedExp.replaceFirst(tightPattern, replacement);
+            logger.info("Tight Pattern Replaced Expression: {}", replacedExp);
+            replacedExp = replacedExp.replaceFirst(loosePattern, replacement);
+            logger.info("Loose Pattern Replaced Expression: {}", replacedExp);
+        }
+        replacedExp = replacedExp
+                .replaceAll("(?i)\\s*IF\\s*\\(\\s*\\(?\\s*(.*?)\\s*\\)?\\s*,\\s*1\\s*,\\s*0\\s*\\)\\s*", "$1");
+        logger.info("IF Pattern Replaced Expression: {}", replacedExp);
+        replacedExp = replacedExp.replaceAll("\\(+\\s*(cond_\\d+(?:_\\d+)?)\\s*\\)+", "$1");
+        replacedExp = replacedExp.replaceAll("\\(\\s*\\(", "(");
+        replacedExp = replacedExp.replaceAll("\\)\\s*\\)", ")");
+        replacedExp = replacedExp.trim();
+        replacedExp = replacedExp.replaceAll("^\\(+", "");
+        replacedExp = replacedExp.replaceAll("\\)+$", "");
+        logger.info("Final Replaced Expression: {}", replacedExp);
+
+        final String replacedExpFinal = replacedExp;
+
+        UDF1<Row, Integer> evalExprUDF = (Row row) -> {
+            String exprToEval = replacedExpFinal;
+            logger.info("Evaluating Expression: {}", exprToEval);
+            try {
+                java.util.regex.Pattern condToken = java.util.regex.Pattern.compile("cond_(\\d+)_([0-9]+)");
+                java.util.regex.Matcher m = condToken.matcher(exprToEval);
+                StringBuffer sb = new StringBuffer();
+                while (m.find()) {
+                    String code = m.group(1);
+                    String occ = m.group(2);
+                    String colName = "cond_" + code + "_" + occ;
+                    Boolean condVal = row.getAs(colName);
+                    if (condVal == null)
+                        condVal = false;
+                    m.appendReplacement(sb, condVal.toString());
+                }
+                m.appendTail(sb);
+                exprToEval = sb.toString();
+
+                // Handle unsuffixed single-occurrence tokens: cond_<code>
+                java.util.regex.Pattern condSingleToken = java.util.regex.Pattern.compile("\\bcond_(\\d+)\\b");
+                java.util.regex.Matcher m2 = condSingleToken.matcher(exprToEval);
+                StringBuffer sb2 = new StringBuffer();
+                while (m2.find()) {
+                    String code = m2.group(1);
+                    String colName = "cond_" + code;
+                    Boolean condVal = row.getAs(colName);
+                    if (condVal == null)
+                        condVal = false;
+                    m2.appendReplacement(sb2, condVal.toString());
+                }
+                m2.appendTail(sb2);
+                exprToEval = sb2.toString();
+
+                Expression evaluatedExpression = new Expression(exprToEval);
+                String resultStr = evaluatedExpression.eval();
+
+                return (resultStr != null && (resultStr.equalsIgnoreCase("true") || resultStr.equals("1"))) ? 1 : 0;
+            } catch (Exception e) {
+                return 0;
+            }
+        };
+        df.sparkSession().udf().register("evalExprUDF", evalExprUDF, DataTypes.IntegerType);
+
+        Dataset<Row> resultDF = df
+                .withColumn("original_exp", functions.lit(originalExp))
+                .withColumn("replaced_exp", functions.lit(replacedExpFinal))
+                .withColumn(
+                        "result",
+                        functions.callUDF(
+                                "evalExprUDF",
+                                functions.struct(
+                                        Arrays.stream(df.columns())
+                                                .map(functions::col)
+                                                .toArray(Column[]::new))));
+
+        return resultDF;
     }
 
     private JobContext setSparkConf(JobContext jobContext) {
@@ -231,6 +756,10 @@ public class ProcessCloseCQLResult extends Processor {
         jobContext.sqlctx().setConf("spark.cassandra.output.batch.size.rows", "500");
         jobContext.sqlctx().setConf("spark.cassandra.output.concurrent.writes", "3");
         jobContext.sqlctx().setConf("spark.cassandra.connection.remoteConnectionsPerExecutor", "5");
+        jobContext.sqlctx().setConf("spark.cassandra.connection.reconnectionDelayMS.min", "1000");
+        jobContext.sqlctx().setConf("spark.cassandra.connection.reconnectionDelayMS.max", "60000");
+        jobContext.sqlctx().setConf("spark.cassandra.read.timeoutMS", "120000");
+        jobContext.sqlctx().setConf("spark.cassandra.connection.keepAliveMS", "60000");
         jobContext.sqlctx().setConf("spark.jdbc.url", sparkPMJdbcUrl);
         jobContext.sqlctx().setConf("spark.jdbc.user", sparkPMJdbcUsername);
         jobContext.sqlctx().setConf("spark.jdbc.password", sparkPMJdbcPassword);
@@ -389,7 +918,7 @@ public class ProcessCloseCQLResult extends Processor {
             }
         }
 
-        logger.info("📊 Recieved LatLong Map: {}", latLongMap);
+        logger.info("Recieved LatLong Map: {}", latLongMap);
         return latLongMap;
     }
 
@@ -424,12 +953,7 @@ public class ProcessCloseCQLResult extends Processor {
         entityType = nodeDetailsMap.get("ENTITY_TYPE");
         entityStatus = nodeDetailsMap.get("ENTITY_STATUS");
 
-        if (isNodeLevel) {
-            Map<String, String> latLongMap = getLatLongUsingEntityId(entityId);
-            latitude = safeParseDouble(latLongMap, "LATITUDE");
-            longitude = safeParseDouble(latLongMap, "LONGITUDE");
-
-        }
+        // Skip latitude/longitude lookup; keep them null
 
         String alarmExternalId = extractedParameters.get("ALARM_EXTERNAL_ID");
         String alarmCode = extractedParameters.get("ALARM_CODE");
@@ -494,6 +1018,14 @@ public class ProcessCloseCQLResult extends Processor {
         alarmWrapper.setAlarmGroup(alarmGroup);
 
         String kafkaBroker = jobContextMap.get("SPARK_KAFKA_BROKER_ANSIBLE");
+        if (kafkaBroker == null || kafkaBroker.isEmpty()) {
+            kafkaBroker = "enttribe-kafka-0.enttribe-kafka-headless.ansible.svc.cluster.local:32392";
+            jobContextMap.put("SPARK_KAFKA_BROKER_ANSIBLE", kafkaBroker);
+        }
+        if (kafkaTopicName == null || kafkaTopicName.isEmpty()) {
+            kafkaTopicName = "pm.alerts.fault";
+            jobContextMap.put("KAFKA_TOPIC_NAME", kafkaTopicName);
+        }
         produceMessage(alarmWrapper, kafkaTopicName, kafkaBroker);
         return new LinkedHashMap<>();
     }
@@ -924,6 +1456,57 @@ public class ProcessCloseCQLResult extends Processor {
         }
     }
 
+    public static void produceMessages(Dataset<AlarmWrapper> dataset, String kafkaBroker) {
+
+        dataset.foreachPartition((ForeachPartitionFunction<AlarmWrapper>) partition -> {
+            if (!partition.hasNext())
+                return;
+
+            Properties props = new Properties();
+            props.put("bootstrap.servers", kafkaBroker);
+            props.put("key.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+            props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+            props.put("acks", "1");
+            props.put("retries", 3);
+            props.put("request.timeout.ms", 15000);
+
+            try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
+                Gson gson = new GsonBuilder().disableHtmlEscaping().create();
+
+                while (partition.hasNext()) {
+                    AlarmWrapper wrapper = partition.next();
+                    if (wrapper == null)
+                        continue;
+
+                    String topic = wrapper.getKafkaTopicName();
+                    if (topic == null || topic.isEmpty()) {
+                        logger.error("Skipping Message: Kafka Topic Name is null/empty for Wrapper: {}", wrapper);
+                        continue;
+                    }
+                    String json = gson.toJson(wrapper);
+
+                    ProducerRecord<String, String> record = new ProducerRecord<>(topic, json);
+
+                    try {
+                        Future<RecordMetadata> future = producer.send(record, (metadata, exception) -> {
+                            if (exception == null) {
+                                logger.info("Produced Message to Topic={} Partition={} Offset={}",
+                                        metadata.topic(), metadata.partition(), metadata.offset());
+                            } else {
+                                logger.error("Kafka Produce Error: {}", exception.getMessage());
+                            }
+                        });
+                        future.get();
+                    } catch (Exception e) {
+                        logger.error("Failed to send message for wrapper: {}", wrapper, e);
+                    }
+                }
+            } catch (Exception e) {
+                logger.error("Kafka Producer Failure In Partition", e);
+            }
+        });
+    }
+
     public static void produceMessage(AlarmWrapper wrapper, String kafkaTopicName, String kafkaBroker) {
 
         if (wrapper == null) {
@@ -1020,7 +1603,8 @@ public class ProcessCloseCQLResult extends Processor {
             Map<String, Map<String, String>> resultMap, JobContext jobContext, Map<String, String> inputMap) {
 
         logger.info("Current Timestamp: {}", timestamp);
-        timestamp = reduceFrequencyFromTimestamp(timestamp, jobContext);
+        String jobFrequency = jobContext.getParameter("FREQUENCY");
+        timestamp = reduceFrequencyFromTimestamp(timestamp, jobFrequency);
         logger.info("Reduced Timestamp: {}", timestamp);
 
         String nodename;
@@ -1072,7 +1656,7 @@ public class ProcessCloseCQLResult extends Processor {
                 logger.info("No Rows Retrieved from Cassandra For Attempt {}", attempt);
             }
 
-            timestamp = reduceFrequencyFromTimestamp(timestamp, jobContext);
+            timestamp = reduceFrequencyFromTimestamp(timestamp, jobFrequency);
         }
 
         return false;
@@ -1089,20 +1673,28 @@ public class ProcessCloseCQLResult extends Processor {
 
         Dataset<Row> cqlDF = getCQLDataUsingSpark(filterQuery, jobContext, inputConfiMap, extractedParametersMap);
         cqlDF.createOrReplaceTempView("CQLResult");
-        cqlDF.show(false);
 
         Dataset<Row> filterDF = jobContext.sqlctx().sql(selectQuery);
-        filterDF.show(false);
+        List<Row> rows = filterDF.collectAsList();
 
-        return filterDF.collectAsList();
+        long size = 0;
+        if (rows != null && !rows.isEmpty()) {
+            size = rows.size();
+        }
+
+        logger.info("Successfully Got CQL Data Using Spark Inside @getCQLData | rows Count={}", size);
+        return rows;
     }
 
     private static Map<String, String> splitCQLQuery(String originalQuery) {
+
+        logger.info("Starting to Split CQL Query Inside @splitCQLQuery | originalQuery={}", originalQuery);
+
         Map<String, String> result = new HashMap<>();
         String cleanedQuery = originalQuery.trim().replaceAll("\\s+", " ");
         int whereIndex = cleanedQuery.toUpperCase().indexOf("WHERE");
         if (whereIndex == -1) {
-            result.put("selectQuery", cleanedQuery); // No WHERE clause
+            result.put("selectQuery", cleanedQuery);
             result.put("filterQuery", "");
             return result;
         }
@@ -1112,6 +1704,8 @@ public class ProcessCloseCQLResult extends Processor {
 
         result.put("selectQuery", selectPart);
         result.put("filterQuery", filterPart);
+
+        logger.info("Successfully Split CQL Query Inside @splitCQLQuery | result={}", result);
         return result;
     }
 
@@ -1120,6 +1714,10 @@ public class ProcessCloseCQLResult extends Processor {
 
         String cqlTableName = extractedParametersMap.get("cqlTableName");
         String cqlConsistencyLevel = "ONE";
+
+        logger.info(
+                "Starting to Get CQL Data Using Spark Inside @getCQLDataUsingSpark | cqlFilter={}, cqlTableName={}, cqlConsistencyLevel={}",
+                cqlFilter, cqlTableName, cqlConsistencyLevel);
 
         Dataset<Row> resultDataFrame = null;
 
@@ -1135,6 +1733,9 @@ public class ProcessCloseCQLResult extends Processor {
                             backoffMs);
                     Thread.sleep(backoffMs);
                 }
+
+                logger.info("Attempting Cassandra Read - Table: {}, Keyspace: pm, Consistency: {}, Filter: {}",
+                        cqlTableName, cqlConsistencyLevel, cqlFilter);
 
                 resultDataFrame = jobContext.sqlctx().read()
                         .format("org.apache.spark.sql.cassandra")
@@ -1163,25 +1764,46 @@ public class ProcessCloseCQLResult extends Processor {
                 }
             }
         }
+
+        long count = 0;
+        if (resultDataFrame != null) {
+            count = resultDataFrame.count();
+        }
+        logger.info("Successfully Got CQL Data Using Spark Inside @getCQLDataUsingSpark | resultDataFrame Count={}",
+                count);
         return resultDataFrame;
     }
 
     private static boolean processEachCQLRowForConsitency(Row row, Map<String, String> extractedParameters) {
 
+        logger.info(
+                "Starting to Process Each CQL Row For Consistency Inside @processEachCQLRowForConsitency | row={}, extractedParameters={}",
+                row, extractedParameters);
+        boolean output = false;
+
         boolean isNodeLevel = Boolean.parseBoolean(extractedParameters.get("isNodeLevel"));
 
         if (isNodeLevel) {
-            Map<String, Map<String, String>> resultMap = getMapForNodeLevel(row, extractedParameters);
-            return processEachResultMapForConsitency(resultMap, extractedParameters);
+            Map<String, Map<String, String>> resultMap = getMapForNodeLevelConsistency(row, extractedParameters);
+            output = processEachResultMapForConsitency(resultMap, extractedParameters);
         } else {
-            Map<String, Map<String, String>> resultMap = getMapForNonNodeLevel(row, extractedParameters);
-            return processEachResultMapForConsitency(resultMap, extractedParameters);
+            Map<String, Map<String, String>> resultMap = getMapForNonNodeLevelConsistency(row, extractedParameters);
+            output = processEachResultMapForConsitency(resultMap, extractedParameters);
         }
+
+        logger.info(
+                "Successfully Processed Each CQL Row For Consistency Inside @processEachCQLRowForConsitency | row={}, extractedParameters={}, output={}",
+                row, extractedParameters, output);
+        return output;
 
     }
 
     private static boolean processEachResultMapForConsitency(Map<String, Map<String, String>> resultMap,
             Map<String, String> extractedParameters) {
+
+        logger.info(
+                "Starting to Process Each Result Map For Consistency Inside @processEachResultMapForConsitency | resultMap={}, extractedParameters={}",
+                resultMap, extractedParameters);
 
         Map<String, String> kpiValueMap = resultMap.get("kpiValueMap");
         String expression = extractedParameters.get("EXPRESSION");
@@ -1212,29 +1834,48 @@ public class ProcessCloseCQLResult extends Processor {
         String expr = optimizedExpression.toString();
         boolean result = isThresholdBreach(expr);
         logger.info("Optimized Expression={} | Evaluation Result={}", expr, result);
+        logger.info(
+                "Successfully Processed Each Result Map For Consistency Inside @processEachResultMapForConsitency | resultMap={}, extractedParameters={}, result={}",
+                resultMap, extractedParameters, result);
         return result;
     }
 
     private static boolean isThresholdBreach(String expression) {
 
+        logger.info("Starting to Evaluate Expression Inside @isThresholdBreach | expression={}", expression);
+        boolean output = false;
         try {
             Expression evaluatedExpression = new Expression(expression);
             String result = evaluatedExpression.eval();
             if (result.equalsIgnoreCase("1")) {
-                return true;
+                output = true;
             } else {
-                return false;
+                output = false;
             }
         } catch (Exception e) {
-            return false;
+            output = false;
         }
+        logger.info("Successfully Evaluated Expression Inside @isThresholdBreach | expression={}, output={}",
+                expression, output);
+        return output;
     }
 
     private static String buildCQLQueryForConsistency(String timestamp, Map<String, String> extractedParameters,
             String nodename) {
 
+        logger.info(
+                "Starting to Build CQL Query For Consistency Inside @buildCQLQueryForConsistency | timestamp={}, extractedParameters={}, nodename={}",
+                timestamp, extractedParameters, nodename);
+
         String kpiCodeList = extractedParameters.get("kpiCodeList");
         String datalevel = extractedParameters.get("DATALEVEL");
+        if (datalevel == null || datalevel.isEmpty()) {
+            datalevel = extractedParameters.get("datalevel");
+        }
+        if (datalevel == null || datalevel.isEmpty()) {
+            logger.error("Data Level is NULL or EMPTY in Map: {}", extractedParameters);
+            throw new RuntimeException("Data Level is NULL or EMPTY");
+        }
         String domain = extractedParameters.get("DOMAIN");
         String vendor = extractedParameters.get("VENDOR");
         String technology = extractedParameters.get("TECHNOLOGY");
@@ -1243,13 +1884,17 @@ public class ProcessCloseCQLResult extends Processor {
         cqlQuery.append("SELECT ");
 
         if (kpiCodeList == null || kpiCodeList.isEmpty()) {
-            return null;
+            logger.error("KPI Code List is NULL or EMPTY in Map: {}", extractedParameters);
+            throw new RuntimeException("KPI Code List is NULL or EMPTY");
         }
 
         String[] kpiCodes = kpiCodeList.split(",");
         if (kpiCodes.length == 0) {
-            return null;
+            logger.error("KPI Code List is EMPTY in Map: {}", extractedParameters);
+            throw new RuntimeException("KPI Code List is EMPTY");
         }
+
+        logger.info("KPI Codes: {}", Arrays.toString(kpiCodes));
 
         for (int i = 0; i < kpiCodes.length; i++) {
             String kpiCode = kpiCodes[i].trim().replaceAll("[\\[\\]]", "");
@@ -1259,15 +1904,15 @@ public class ProcessCloseCQLResult extends Processor {
             }
         }
 
-        if (datalevel.contains("L0")) {
+        if (datalevel != null && datalevel.contains("L0")) {
             cqlQuery.append(", metajson['ENTITY_NAME'], metajson['ENTITY_TYPE']");
-        } else if (datalevel.contains("L1")) {
+        } else if (datalevel != null && datalevel.contains("L1")) {
             cqlQuery.append(", metajson['L1'], metajson['ENTITY_TYPE']");
-        } else if (datalevel.contains("L2")) {
+        } else if (datalevel != null && datalevel.contains("L2")) {
             cqlQuery.append(", metajson['L1'], metajson['L2'], metajson['ENTITY_TYPE']");
-        } else if (datalevel.contains("L3")) {
+        } else if (datalevel != null && datalevel.contains("L3")) {
             cqlQuery.append(", metajson['L1'], metajson['L2'], metajson['L3'], metajson['ENTITY_TYPE']");
-        } else if (datalevel.contains("L4")) {
+        } else if (datalevel != null && datalevel.contains("L4")) {
             cqlQuery.append(
                     ", metajson['L1'], metajson['L2'], metajson['L3'], metajson['L4'], metajson['ENTITY_TYPE']");
         } else {
@@ -1297,13 +1942,18 @@ public class ProcessCloseCQLResult extends Processor {
 
         cqlQuery.append(" timestamp = '").append(timestamp).append("'");
 
-        logger.info("CQL Query For Consistency: {}", cqlQuery.toString());
+        logger.info("Successfully Built CQL Query For Consistency Inside @buildCQLQueryForConsistency | cqlQuery={}",
+                cqlQuery.toString());
 
         return cqlQuery.toString();
     }
 
     private static Map<String, Map<String, String>> getMapForNonNodeLevel(Row row,
             Map<String, String> extractedParameters) {
+
+        logger.info(
+                "Starting to Get Map For Non Node Level Inside @getMapForNonNodeLevel | row={}, extractedParameters={}",
+                row, extractedParameters);
 
         String kpiCodeList = extractedParameters.get("kpiCodeList");
 
@@ -1363,11 +2013,16 @@ public class ProcessCloseCQLResult extends Processor {
         nodeDetailsMap.put("nodename", nodename);
 
         resultMap.put("nodeDetailsMap", nodeDetailsMap);
+
+        logger.info("Successfully Got Map For Non Node Level Inside @getMapForNonNodeLevel | resultMap={}", resultMap);
         return resultMap;
     }
 
     private static Map<String, Map<String, String>> getMapForNodeLevel(Row row,
             Map<String, String> extractedParameters) {
+
+        logger.info("Starting to Get Map For Node Level Inside @getMapForNodeLevel | row={}, extractedParameters={}",
+                row, extractedParameters);
 
         String kpiCodeList = extractedParameters.get("kpiCodeList");
 
@@ -1375,6 +2030,8 @@ public class ProcessCloseCQLResult extends Processor {
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toList());
+
+        logger.info("KPI Codes: {}", kpiCodes);
 
         Map<String, String> kpiValueMap = new HashMap<>();
 
@@ -1395,6 +2052,8 @@ public class ProcessCloseCQLResult extends Processor {
             }
 
         }
+
+        logger.info("KPI Value Map: {}", kpiValueMap);
 
         String neid = row.getAs("ENTITY_ID") != null ? (String) row.getAs("ENTITY_ID") : "";
         String nename = row.getAs("ENTITY_NAME") != null ? (String) row.getAs("ENTITY_NAME") : "";
@@ -1423,11 +2082,164 @@ public class ProcessCloseCQLResult extends Processor {
         Map<String, Map<String, String>> resultMap = new HashMap<>();
         resultMap.put("nodeDetailsMap", nodeDetailsMap);
         resultMap.put("kpiValueMap", kpiValueMap);
+
+        logger.info("Successfully Got Map For Node Level Inside @getMapForNodeLevel | resultMap={}", resultMap);
+        return resultMap;
+    }
+
+    private static Map<String, Map<String, String>> getMapForNonNodeLevelConsistency(Row row,
+            Map<String, String> extractedParameters) {
+
+        logger.info(
+                "Starting to Get Map For Non Node Level Consistency Inside @getMapForNonNodeLevelConsistency | row={}, extractedParameters={}",
+                row, extractedParameters);
+
+        String kpiCodeList = extractedParameters.get("kpiCodeList");
+
+        List<String> kpiCodes = Arrays.stream(kpiCodeList.replace("[", "").replace("]", "").split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+
+        logger.info("KPI Codes: {}", kpiCodes);
+
+        Map<String, String> kpiValueMap = new HashMap<>();
+
+        for (String kpiCode : kpiCodes) {
+            String kpiColumn = "kpijson[" + kpiCode + "]";
+            Object kpiValueObj = row.getAs(kpiColumn);
+            String kpiValue = null;
+
+            if (kpiValueObj != null) {
+                try {
+                    double kpiDouble = Double.parseDouble(kpiValueObj.toString());
+                    kpiValue = String.format("%.4f", kpiDouble);
+                    kpiValueMap.put(kpiCode, kpiValue);
+                } catch (NumberFormatException e) {
+                    logger.error("Error Parsing KPI Value, Message: {}, Error: {}", e.getMessage(), e);
+                }
+            }
+        }
+        logger.info("KPI Value Map : {}", kpiValueMap);
+
+        Map<String, Map<String, String>> resultMap = new HashMap<>();
+        resultMap.put("kpiValueMap", kpiValueMap);
+
+        String level = extractedParameters.get("level");
+        logger.info("Map Level: {}", level);
+        Map<String, String> nodeDetailsMap = new HashMap<>();
+
+        String neid = row.getAs("metajson[ENTITY_ID]") != null ? (String) row.getAs("metajson[ENTITY_ID]") : "";
+        String nename = row.getAs("metajson[ENTITY_NAME]") != null ? (String) row.getAs("metajson[ENTITY_NAME]") : "";
+        String subentity = row.getAs("metajson[ENTITY_TYPE]") != null ? (String) row.getAs("metajson[ENTITY_TYPE]")
+                : "";
+        String geoL1 = row.getAs("metajson[L1]") != null ? (String) row.getAs("metajson[L1]") : "";
+        String geoL2 = row.getAs("metajson[L2]") != null ? (String) row.getAs("metajson[L2]") : "";
+        String geoL3 = row.getAs("metajson[L3]") != null ? (String) row.getAs("metajson[L3]") : "";
+        String geoL4 = row.getAs("metajson[L4]") != null ? (String) row.getAs("metajson[L4]") : "";
+        String entityType = row.getAs("metajson[ENTITY_TYPE]") != null ? (String) row.getAs("metajson[ENTITY_TYPE]")
+                : "";
+        String entityStatus = "-";
+        String nodename = row.getAs("nodename") != null ? (String) row.getAs("nodename") : "";
+
+        nodeDetailsMap.put("ENTITY_ID", neid);
+        nodeDetailsMap.put("ENTITY_NAME", nename);
+        nodeDetailsMap.put("SUBENTITY", subentity);
+        nodeDetailsMap.put("GEOGRAPHY_L1_NAME", geoL1);
+        nodeDetailsMap.put("GEOGRAPHY_L2_NAME", geoL2);
+        nodeDetailsMap.put("GEOGRAPHY_L3_NAME", geoL3);
+        nodeDetailsMap.put("GEOGRAPHY_L4_NAME", geoL4);
+        nodeDetailsMap.put("ENTITY_TYPE", entityType);
+        nodeDetailsMap.put("ENTITY_STATUS", entityStatus);
+        nodeDetailsMap.put("nodename", nodename);
+
+        resultMap.put("nodeDetailsMap", nodeDetailsMap);
+
+        logger.info(
+                "Successfully Got Map For Non Node Level Consistency Inside @getMapForNonNodeLevelConsistency | resultMap={}",
+                resultMap);
+        return resultMap;
+    }
+
+    private static Map<String, Map<String, String>> getMapForNodeLevelConsistency(Row row,
+            Map<String, String> extractedParameters) {
+
+        logger.info(
+                "Starting to Get Map For Node Level Consistency Inside @getMapForNodeLevelConsistency | row={}, extractedParameters={}",
+                row, extractedParameters);
+
+        String kpiCodeList = extractedParameters.get("kpiCodeList");
+
+        List<String> kpiCodes = Arrays.stream(kpiCodeList.replace("[", "").replace("]", "").split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+
+        logger.info("KPI Codes: {}", kpiCodes);
+
+        Map<String, String> kpiValueMap = new HashMap<>();
+
+        for (String kpiCode : kpiCodes) {
+
+            String kpiColumn = "kpijson[" + kpiCode + "]";
+            Object kpiValueObj = row.getAs(kpiColumn);
+            String kpiValue = null;
+
+            if (kpiValueObj != null) {
+                try {
+                    double kpiDouble = Double.parseDouble(kpiValueObj.toString());
+                    kpiValue = String.format("%.4f", kpiDouble);
+                    kpiValueMap.put(kpiCode, kpiValue);
+                } catch (NumberFormatException e) {
+                    logger.error("Error Parsing KPI Value, Message: {}, Error: {}", e.getMessage(), e);
+                }
+            }
+
+        }
+
+        logger.info("KPI Value Map: {}", kpiValueMap);
+
+        String neid = row.getAs("metajson[ENTITY_ID]") != null ? (String) row.getAs("metajson[ENTITY_ID]") : "";
+        String nename = row.getAs("metajson[ENTITY_NAME]") != null ? (String) row.getAs("metajson[ENTITY_NAME]") : "";
+        String subentity = row.getAs("metajson[ENTITY_TYPE]") != null ? (String) row.getAs("metajson[ENTITY_TYPE]")
+                : "";
+        String geoL1 = row.getAs("metajson[L1]") != null ? (String) row.getAs("metajson[L1]") : "";
+        String geoL2 = row.getAs("metajson[L2]") != null ? (String) row.getAs("metajson[L2]") : "";
+        String geoL3 = row.getAs("metajson[L3]") != null ? (String) row.getAs("metajson[L3]") : "";
+        String geoL4 = row.getAs("metajson[L4]") != null ? (String) row.getAs("metajson[L4]") : "";
+        String entityType = row.getAs("metajson[ENTITY_TYPE]") != null ? (String) row.getAs("metajson[ENTITY_TYPE]")
+                : "";
+        String entityStatus = "ONAIR";
+        String nodename = row.getAs("nodename") != null ? (String) row.getAs("nodename") : "";
+
+        Map<String, String> nodeDetailsMap = new HashMap<>();
+        nodeDetailsMap.put("ENTITY_ID", neid);
+        nodeDetailsMap.put("ENTITY_NAME", nename);
+        nodeDetailsMap.put("SUBENTITY", subentity);
+
+        nodeDetailsMap.put("GEOGRAPHY_L1_NAME", geoL1);
+        nodeDetailsMap.put("GEOGRAPHY_L2_NAME", geoL2);
+        nodeDetailsMap.put("GEOGRAPHY_L3_NAME", geoL3);
+        nodeDetailsMap.put("GEOGRAPHY_L4_NAME", geoL4);
+        nodeDetailsMap.put("ENTITY_TYPE", entityType);
+        nodeDetailsMap.put("ENTITY_STATUS", entityStatus);
+        nodeDetailsMap.put("nodename", nodename);
+
+        Map<String, Map<String, String>> resultMap = new HashMap<>();
+        resultMap.put("nodeDetailsMap", nodeDetailsMap);
+        resultMap.put("kpiValueMap", kpiValueMap);
+
+        logger.info(
+                "Successfully Got Map For Node Level Consistency Inside @getMapForNodeLevelConsistency | resultMap={}",
+                resultMap);
         return resultMap;
     }
 
     private static String buildCQLQuery(Map<String, String> finalMap,
             String aggregationLevel, JobContext jobContext) {
+
+        logger.info("Starting to Build CQL Query Inside @buildCQLQuery | finalMap={}, aggregationLevel={}", finalMap,
+                aggregationLevel);
 
         StringBuilder cqlQuery = new StringBuilder();
 
@@ -1436,7 +2248,7 @@ public class ProcessCloseCQLResult extends Processor {
         String technology = finalMap.get("TECHNOLOGY");
         String kpiCodeList = finalMap.get("kpiCodeList");
 
-        cqlQuery.append("SELECT ");
+        cqlQuery.append("SELECT timestamp, datalevel, ");
 
         if (kpiCodeList == null || kpiCodeList.isEmpty()) {
             return null;
@@ -1529,13 +2341,26 @@ public class ProcessCloseCQLResult extends Processor {
 
         }
 
-        cqlQuery.append(", nodename");
+        cqlQuery.append(", CASE WHEN TRIM(nodename) IS NULL OR TRIM(nodename) = '' OR LOWER(TRIM(nodename)) = 'null' " +
+                "THEN (CASE " +
+                "WHEN TRIM(metajson['NEID']) IS NOT NULL AND TRIM(metajson['NEID']) <> '' AND LOWER(TRIM(metajson['NEID'])) <> 'null' THEN metajson['NEID'] "
+                +
+                "WHEN TRIM(metajson['ENTITY_ID']) IS NOT NULL AND TRIM(metajson['ENTITY_ID']) <> '' AND LOWER(TRIM(metajson['ENTITY_ID'])) <> 'null' THEN metajson['ENTITY_ID'] "
+                +
+                "WHEN TRIM(metajson['ENTITY_NAME']) IS NOT NULL AND TRIM(metajson['ENTITY_NAME']) <> '' AND LOWER(TRIM(metajson['ENTITY_NAME'])) <> 'null' THEN metajson['ENTITY_NAME'] "
+                +
+                "ELSE '-' END) " +
+                "ELSE UPPER(nodename) END AS nodename");
         cqlQuery.append(" FROM ");
         cqlQuery.append("CQLResult");
+
+        logger.info("Successfully Built CQL Query Inside @buildCQLQuery | cqlQuery={}", cqlQuery.toString());
         return cqlQuery.toString();
     }
 
     private static Dataset<Row> executeQuery(String sqlQuery, JobContext jobContext) {
+
+        logger.info("Starting to Execute Query Inside @executeQuery | sqlQuery={}", sqlQuery);
 
         Dataset<Row> resultDataset = null;
 
@@ -1549,6 +2374,8 @@ public class ProcessCloseCQLResult extends Processor {
                     .option("query", sqlQuery)
                     .load();
 
+            logger.info("Successfully Executed Query Inside @executeQuery | sqlQuery={}", sqlQuery);
+
             return resultDataset;
 
         } catch (Exception e) {
@@ -1558,9 +2385,10 @@ public class ProcessCloseCQLResult extends Processor {
 
     }
 
-    public static String reduceFrequencyFromTimestamp(String timestamp, JobContext jobContext) {
+    public static String reduceFrequencyFromTimestamp(String timestamp, String jobFrequency) {
 
-        String jobFrequency = jobContext.getParameter("FREQUENCY");
+        logger.info("Starting to Reduce Timestamp Inside @reduceFrequencyFromTimestamp | timestamp={}, jobFrequency={}",
+                timestamp, jobFrequency);
 
         long reduceMinutes = 0L;
 
@@ -1627,19 +2455,10 @@ public class ProcessCloseCQLResult extends Processor {
 
         try {
 
-            if (dbName.contains("FMS")) {
+            Class.forName(sparkPMJdbcDriver);
+            connection = DriverManager.getConnection(sparkPMJdbcUrl, sparkPMJdbcUsername,
+                    sparkPMJdbcPassword);
 
-                Class.forName(sparkFMJdbcDriver);
-                connection = DriverManager.getConnection(sparkFMJdbcUrl, sparkFMJdbcUsername,
-                        sparkFMJdbcPassword);
-
-            } else if (dbName.contains("PERFORMANCE")) {
-
-                Class.forName(sparkPMJdbcDriver);
-                connection = DriverManager.getConnection(sparkPMJdbcUrl, sparkPMJdbcUsername,
-                        sparkPMJdbcPassword);
-
-            }
             return connection;
 
         } catch (ClassNotFoundException e) {

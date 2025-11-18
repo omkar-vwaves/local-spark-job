@@ -52,11 +52,45 @@ public class FinalPMAlertOpenMain {
                         String TECHNOLOGY = jobContext.getParameter("TECHNOLOGY");
                         String FREQUENCY = jobContext.getParameter("FREQUENCY");
 
+                        jobContext.setParameters("FREQUENCY", "5 MIN");
+
                         logger.info("JOB CONTEXT PARAMETERS ====> DOMAIN: {}, VENDOR: {}, TECHNOLOGY: {}, FREQUENCY: {}",
                                         DOMAIN,
                                         VENDOR, TECHNOLOGY, FREQUENCY);
 
-                        String READ_OPEN_ALERT_RULES_QUERY = "SELECT ALERTID, EXPRESSION, DESCRIPTION, NAME AS ALARM_NAME, DOMAIN, VENDOR, TECHNOLOGY, CONFIGURATION FROM PERFORMANCE_ALERT WHERE DOMAIN = '$DOMAIN' AND VENDOR = '$VENDOR' AND TECHNOLOGY = '$TECHNOLOGY' AND UPPER(JSON_UNQUOTE(JSON_EXTRACT(REPLACE(REPLACE(CONFIGURATION,'\"',''),\"'\",'\"'),'$.frequency[0]'))) = '$FREQUENCY' AND UPPER(JSON_UNQUOTE(JSON_EXTRACT(REPLACE(REPLACE(CONFIGURATION,'\"',''),\"'\",'\"'),'$.mo[0]'))) LIKE '%AGGREGATED%' AND UPPER(JSON_UNQUOTE(JSON_EXTRACT(REPLACE(REPLACE(CONFIGURATION,'\"',''),\"'\",'\"'),'$.geography_l1[0]'))) <> 'CUSTOM' AND DELETED = 0";
+                        String READ_OPEN_ALERT_RULES_QUERY = "SELECT ALERTID, EXPRESSION, DESCRIPTION, NAME AS ALARM_NAME, DOMAIN, VENDOR, TECHNOLOGY, CONFIGURATION "
+                                        + "FROM PERFORMANCE_ALERT "
+                                        + "WHERE DOMAIN = '$DOMAIN' "
+                                        + "AND VENDOR = '$VENDOR' "
+                                        + "AND TECHNOLOGY = '$TECHNOLOGY' "
+                                        + "AND JSON_VALID( "
+                                        + "  CASE "
+                                        + "    WHEN LEFT(CONFIGURATION,1)='\"' AND RIGHT(CONFIGURATION,1)='\"' "
+                                        + "      THEN REPLACE(SUBSTRING(CONFIGURATION,2,CHAR_LENGTH(CONFIGURATION)-2), '''','\"') "
+                                        + "    ELSE REPLACE(CONFIGURATION, '''','\"') "
+                                        + "  END "
+                                        + ") "
+                                        + "AND UPPER(JSON_UNQUOTE(JSON_EXTRACT( "
+                                        + "  CAST( "
+                                        + "    CASE "
+                                        + "      WHEN LEFT(CONFIGURATION,1)='\"' AND RIGHT(CONFIGURATION,1)='\"' "
+                                        + "        THEN REPLACE(SUBSTRING(CONFIGURATION,2,CHAR_LENGTH(CONFIGURATION)-2), '''','\"') "
+                                        + "      ELSE REPLACE(CONFIGURATION, '''','\"') "
+                                        + "    END AS JSON), '$.frequency[0]'))) = '$FREQUENCY' "
+                                        + "AND UPPER(JSON_UNQUOTE(JSON_EXTRACT( "
+                                        + "  CAST( "
+                                        + "    CASE "
+                                        + "      WHEN LEFT(CONFIGURATION,1)='\"' AND RIGHT(CONFIGURATION,1)='\"' "
+                                        + "        THEN REPLACE(SUBSTRING(CONFIGURATION,2,CHAR_LENGTH(CONFIGURATION)-2), '''','\"') "
+                                        + "      ELSE REPLACE(CONFIGURATION, '''','\"') "
+                                        + "    END AS JSON), '$.mo[0]'))) LIKE '%AGGREGATED%' "
+                                        + "AND UPPER(JSON_UNQUOTE(JSON_EXTRACT( "
+                                        + "  CAST( "
+                                        + "    CASE "
+                                        + "      WHEN LEFT(CONFIGURATION,1)='\"' AND RIGHT(CONFIGURATION,1)='\"' "
+                                        + "        THEN REPLACE(SUBSTRING(CONFIGURATION,2,CHAR_LENGTH(CONFIGURATION)-2), '''','\"') "
+                                        + "      ELSE REPLACE(CONFIGURATION, '''','\"') "
+                                        + "    END AS JSON), '$.geography_l1[0]'))) <> 'CUSTOM' AND PERFORMANCE_ALERT_ID_PK IN (1751)";
 
                         READ_OPEN_ALERT_RULES_QUERY = READ_OPEN_ALERT_RULES_QUERY.replace("$DOMAIN", DOMAIN);
                         READ_OPEN_ALERT_RULES_QUERY = READ_OPEN_ALERT_RULES_QUERY.replace("$VENDOR", VENDOR);
@@ -129,6 +163,9 @@ public class FinalPMAlertOpenMain {
                                         "memoryAndDisk", "CacheExtractedRule")
                                         .executeAndGetResultDataframe(jobContext);
 
+                        dataFrame.show();
+                        logger.info("++++++++++++[CACHE CONFIGURATION]++++++++++++");
+
                         String CURRENT_COUNT = jobContext.getParameter("CURRENT_COUNT");
                         String FINAL_COUNT = jobContext.getParameter("FINAL_COUNT");
 
@@ -173,7 +210,7 @@ public class FinalPMAlertOpenMain {
         private static JobContext setParametersToJobContext(JobContext jobContext) {
 
                 jobContext.setParameters("SPARK_PM_JDBC_URL",
-                                "jdbc:mysql://localhost:3306/PERFORMANCE?autoReconnect=true&allowPublicKeyRetrieval=true&useSSL=false");
+                                "jdbc:mysql://localhost:3306/PERFORMANCE_DEV?autoReconnect=true&allowPublicKeyRetrieval=true&useSSL=false");
                 jobContext.setParameters("SPARK_PM_JDBC_DRIVER", "org.mariadb.jdbc.Driver");
                 jobContext.setParameters("SPARK_PM_JDBC_USERNAME", "root");
                 jobContext.setParameters("SPARK_PM_JDBC_PASSWORD", "root");
@@ -215,7 +252,7 @@ public class FinalPMAlertOpenMain {
                 jobContext.setParameters("VENDOR", "CISCO");
                 jobContext.setParameters("TECHNOLOGY", "COMMON");
                 jobContext.setParameters("FREQUENCY", "5 MIN");
-                jobContext.setParameters("TIMESTAMP", "2025-08-01 00:20:00.000000+0000");
+                jobContext.setParameters("TIMESTAMP", "2025-08-01 01:00:00.000000+0000");
                 jobContext.setParameters("KAFKA_TOPIC_NAME", "pm.alerts.fault");
                 jobContext.setParameters("SPARK_KAFKA_BROKER_ANSIBLE", "localhost:9092");
 

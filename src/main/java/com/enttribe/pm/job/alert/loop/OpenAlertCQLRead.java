@@ -2,7 +2,6 @@ package com.enttribe.pm.job.alert.loop;
 
 import com.enttribe.sparkrunner.processors.Processor;
 
-import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -69,11 +68,7 @@ public class OpenAlertCQLRead extends Processor {
     public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) throws Exception {
 
         String CURRENT_COUNT = jobContext.getParameter("CURRENT_COUNT");
-        logger.info("[OpenAlertCQLRead={}] Execution Started!", CURRENT_COUNT);
-
-        if (this.dataFrame == null || this.dataFrame.isEmpty()) {
-            return this.dataFrame;
-        }
+        logger.info("[OpenAlertCQLRead={}] Execution Started (Updated-2)!", CURRENT_COUNT);
 
         long startTime = System.currentTimeMillis();
 
@@ -118,7 +113,7 @@ public class OpenAlertCQLRead extends Processor {
         long minutes = durationMillis / 60000;
         long seconds = (durationMillis % 60000) / 1000;
 
-        // cqlResultDataFrame.show();
+        cqlResultDataFrame.show();
         logger.info("++++++[OpenAlertCQLRead={}] Execution Completed! Time Taken: {} Minutes | {} Seconds",
                 CURRENT_COUNT, minutes,
                 seconds);
@@ -900,7 +895,7 @@ public class OpenAlertCQLRead extends Processor {
                 .collect(Collectors.joining(", "));
 
         String cqlFilter = String.format(
-                "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s'  AND date = '%s' AND nodename IN (%s) AND timestamp = '%s'",
+                "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s'  AND date = '%s' AND nodename IN (%s) AND timestamp = '%s' AND nodename IS NOT NULL AND domain IS NOT NULL AND vendor IS NOT NULL AND technology IS NOT NULL AND networktype IS NOT NULL AND date IS NOT NULL AND timestamp IS NOT NULL AND datalevel IS NOT NULL AND kpijson IS NOT NULL",
                 domain, vendor, technology, datalevel, date, inClause, utcTimestampStr);
 
         logger.info("CQL Filter With Nodename: {}", cqlFilter);
@@ -962,7 +957,7 @@ public class OpenAlertCQLRead extends Processor {
 
             String ruleType = extraParameters.get("RULE_TYPE");
             String cqlFilter = null;
-            if (ruleType.equalsIgnoreCase("TREND_RULE")) {
+            if (ruleType.equalsIgnoreCase("TREND_RULE") || ruleType.equalsIgnoreCase("PERCENTAGE")) {
 
                 int bufferWindow = 1;
                 try {
@@ -999,23 +994,37 @@ public class OpenAlertCQLRead extends Processor {
                 DateTimeFormatter formatterStr = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSXXXX");
                 OffsetDateTime currentTs = OffsetDateTime.parse(timestamp, parser);
                 List<String> timestampFilters = new ArrayList<>();
+                List<String> dateList = new ArrayList<>();
                 for (int i = 0; i <= bufferWindow; i++) {
                     OffsetDateTime ts = currentTs.minus(i * freqMinutes, ChronoUnit.MINUTES);
                     timestampFilters.add(String.format("timestamp = '%s'", ts.format(formatterStr)));
+                    String dateStrPart = ts.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    if (!dateList.contains(dateStrPart)) {
+                        dateList.add(dateStrPart);
+                    }
                 }
                 String timestampCondition = String.join(" OR ", timestampFilters);
+                String dateCondition = dateList.size() == 1
+                        ? String.format("date = '%s'", dateList.get(0))
+                        : String.format("date IN (%s)",
+                                dateList.stream().map(d -> "'" + d + "'").collect(Collectors.joining(", ")));
+
+                logger.info("Date Condition: {}", dateCondition);
+                logger.info("Timestamp Condition: {}", timestampCondition);
+
                 cqlFilter = String.format(
-                        "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s'%s AND (%s)",
+                        "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s'%s AND %s AND (%s) AND nodename IS NOT NULL AND domain IS NOT NULL AND vendor IS NOT NULL AND technology IS NOT NULL AND networktype IS NOT NULL AND date IS NOT NULL AND timestamp IS NOT NULL AND datalevel IS NOT NULL AND kpijson IS NOT NULL",
                         domain,
                         vendor,
                         technology,
                         datalevel,
                         "L0".equals(aggregationLevel) ? " AND nodename = 'India'" : "",
+                        dateCondition,
                         timestampCondition);
 
             } else {
                 cqlFilter = String.format(
-                        "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s' AND date = '%s'%s AND timestamp = '%s'",
+                        "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s' AND date = '%s'%s AND timestamp = '%s' AND nodename IS NOT NULL AND domain IS NOT NULL AND vendor IS NOT NULL AND technology IS NOT NULL AND networktype IS NOT NULL AND date IS NOT NULL AND timestamp IS NOT NULL AND datalevel IS NOT NULL AND kpijson IS NOT NULL",
                         domain,
                         vendor,
                         technology,
@@ -1099,8 +1108,14 @@ public class OpenAlertCQLRead extends Processor {
 
         jobContext.sqlctx().setConf("spark.sql.catalog.ybcatalog",
                 "com.datastax.spark.connector.datasource.CassandraCatalog");
+        jobContext.sqlctx().setConf("spark.cassandra.input.consistency.level", "ONE");
+        jobContext.sqlctx().setConf("spark.cassandra.output.consistency.level", "ONE");
         jobContext.sqlctx().setConf("spark.cassandra.query.retry.count", "10");
         jobContext.sqlctx().setConf("spark.cassandra.connection.remoteConnectionsPerExecutor", "5");
+        jobContext.sqlctx().setConf("spark.cassandra.connection.reconnectionDelayMS.min", "1000");
+        jobContext.sqlctx().setConf("spark.cassandra.connection.reconnectionDelayMS.max", "60000");
+        jobContext.sqlctx().setConf("spark.cassandra.read.timeoutMS", "120000");
+        jobContext.sqlctx().setConf("spark.cassandra.connection.keepAliveMS", "60000");
 
         jobContext.sqlctx().setConf("spark.cassandra.output.ignoreNulls", "true");
         jobContext.sqlctx().setConf("spark.cassandra.output.batch.size.rows", "500");
@@ -1117,6 +1132,7 @@ public class OpenAlertCQLRead extends Processor {
             Map<String, String> reportWidgetDetails, Map<String, String> extractedParametersMap) {
 
         String cqlTableName = extractedParametersMap.get("cqlTableName");
+        String cqlConsistencyLevel = "ONE";
         jobContext.sqlctx().sparkSession().conf().set("spark.sql.session.timeZone", "UTC");
 
         Dataset<Row> resultDataFrame = null;
@@ -1134,16 +1150,23 @@ public class OpenAlertCQLRead extends Processor {
                     Thread.sleep(backoffMs);
                 }
 
+                logger.info(
+                        "Attempting Cassandra Read - Table: {}, Keyspace: {}, Consistency: {}, Datacenter: {}, Host: {}",
+                        cqlTableName, sparkCassandraKeyspacePM, cqlConsistencyLevel, sparkCassandraDatacenter,
+                        sparkCassandraHost);
+
                 resultDataFrame = jobContext.sqlctx().read()
                         .format("org.apache.spark.sql.cassandra")
                         .options(Map.of(
                                 "table", cqlTableName,
                                 "keyspace", sparkCassandraKeyspacePM,
-                                "pushdown", "true"))
+                                "pushdown", "true",
+                                "consistency.level", cqlConsistencyLevel))
                         .load()
                         .filter(cqlFilter);
                 resultDataFrame = resultDataFrame.cache();
                 success = true;
+                logger.info("Cassandra Read Successful - Retrieved {} rows", resultDataFrame.count());
 
             } catch (Exception e) {
                 currentRetry++;

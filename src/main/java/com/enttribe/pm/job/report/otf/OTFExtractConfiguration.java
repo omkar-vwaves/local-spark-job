@@ -44,37 +44,35 @@ public class OTFExtractConfiguration extends Processor {
    private static final Logger logger = LoggerFactory.getLogger(OTFExtractConfiguration.class);
 
    private static final String FALLBACK_SPARK_PM_JDBC_DRIVER = "org.mariadb.jdbc.Driver";
-   private static final String FALLBACK_SPARK_PM_JDBC_URL = "jdbc:mysql://mysql-nst-cluster.nstdb.svc.cluster.local:6446/PERFORMANCE_A_LAB?autoReconnect=true";
+   private static final String FALLBACK_SPARK_PM_JDBC_URL = "jdbc:mysql://mysql-nst-cluster.nstdb.svc.cluster.local:6446/PERFORMANCE?autoReconnect=true";
    private static final String FALLBACK_SPARK_PM_JDBC_USERNAME = "PERFORMANCE";
    private static final String FALLBACK_SPARK_PM_JDBC_PASSWORD = "perform!123";
+   private static final Boolean IS_LOG_ENABLED = true;
 
    public OTFExtractConfiguration() {
       super();
-      logger.error("OTFExtractConfiguration Constructor Called!");
    }
 
    public OTFExtractConfiguration(Dataset<Row> dataFrame, int processorId, String processorName) {
       super(processorId, processorName);
-      logger.error("OTFExtractConfiguration Constructor Called with Input DataFrame With ID: {} and Process Name: {}",
-            processorId, processorName);
    }
 
    @Override
    public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) throws Exception {
 
-      logger.error("OTFExtractConfiguration Execution Started !");
+      logger.info("OTFExtractConfiguration Execution Started!");
 
-      if (this.dataFrame == null && this.dataFrame.isEmpty()) {
-         logger.error("OTFExtractConfiguration Execution Failed! Input DataFrame is Empty!");
+      if (this.dataFrame == null || this.dataFrame.isEmpty()) {
+         logger.info("OTFExtractConfiguration Execution Failed! Input DataFrame is Empty!");
          return this.dataFrame;
       }
 
       this.dataFrame.show(5);
-      logger.error("++++++++++[REPORT WIDGET DETAILS]++++++++++");
+      logger.info("++++++++++[REPORT WIDGET DETAILS]++++++++++");
 
       List<Row> rowList = this.dataFrame.collectAsList();
       if (rowList.isEmpty()) {
-         logger.error("OTFExtractConfiguration Execution Failed! Input DataFrame is Empty!");
+         logger.info("OTFExtractConfiguration Execution Failed! Input DataFrame is Empty!");
          return this.dataFrame;
       }
 
@@ -100,11 +98,13 @@ public class OTFExtractConfiguration extends Processor {
       String trinoOrcFilePaths = getTrinoOrcFilePaths(extraParametersMap, reportWidgetDetailsMap, jobContext);
       Map<String, String> metaColumnsMap = getMetaColumnsMap(extraParametersMap);
 
-      logger.error("Meta Columns Map: {}", metaColumnsMap);
-      logger.error("Report Widget Details Map: {}", reportWidgetDetailsMap);
-      logger.error("RAG Configuration Map: {}", ragConfigurationMap);
-      logger.error("Node And Aggregation Details Map: {}", nodeAndAggregationDetailsMap);
-      logger.error("Extra Parameters Map: {}", extraParametersMap);
+      if (IS_LOG_ENABLED) {
+         logger.info("Meta Columns Map: {}", metaColumnsMap);
+         logger.info("Report Widget Details Map: {}", reportWidgetDetailsMap);
+         logger.info("RAG Configuration Map: {}", ragConfigurationMap);
+         logger.info("Node And Aggregation Details Map: {}", nodeAndAggregationDetailsMap);
+         logger.info("Extra Parameters Map: {}", extraParametersMap);
+      }
 
       Map<String, String> kpiDetailsMap = new LinkedHashMap<>();
       Map<String, String> kpiCodeWithKpiNameMap = new LinkedHashMap<>();
@@ -115,14 +115,39 @@ public class OTFExtractConfiguration extends Processor {
       initializeKPICounterDetails(reportWidgetDetailsMap, kpiDetailsMap, counterDetailsMap, kpiCodeList, counterIdList,
             kpiCodeWithKpiNameMap, counterIdWithCounterNameMap);
 
+      if (IS_LOG_ENABLED) {
+         logger.info("KPI Code List: {}", kpiCodeList);
+         logger.info("Counter Id List: {}", counterIdList);
+         logger.info("KPI Code With KPI Name Map: {}", kpiCodeWithKpiNameMap);
+         logger.info("Counter Id With Counter Name Map: {}", counterIdWithCounterNameMap);
+      }
+
+      Set<String> kpiWithSubKPI = new HashSet<>();
+
+      Set<String> normalKPIs = new HashSet<>();
+      normalKPIs.addAll(kpiCodeList);
+      Set<String> timeShiftedKPIs = new HashSet<>();
+      kpiWithSubKPI = getNormalSubkpiWithKPI(normalKPIs, kpiWithSubKPI,
+            timeShiftedKPIs, jobContext);
+
+      if (IS_LOG_ENABLED) {
+         logger.info("KPI Code List Before Adding Sub KPI: {}", kpiCodeList);
+      }
+      kpiCodeList = new ArrayList<>(kpiWithSubKPI);
+      if (IS_LOG_ENABLED) {
+         logger.info("KPI Code List After Adding Sub KPI: {}", kpiCodeList);
+      }
+
       String kpiCodeCommaSeparated = kpiCodeList.stream().collect(Collectors.joining(","));
       String counterIdCommaSeparated = counterIdList.stream().collect(Collectors.joining(","));
 
       jobContext.setParameters("KPI_CODE_COMMA_SEPARATED", kpiCodeCommaSeparated);
       jobContext.setParameters("COUNTER_ID_COMMA_SEPARATED", counterIdCommaSeparated);
 
-      logger.error("KPI Code Comma Separated: {}", kpiCodeCommaSeparated);
-      logger.error("Counter Id Comma Separated: {}", counterIdCommaSeparated);
+      if (IS_LOG_ENABLED) {
+         logger.info("KPI Code Comma Separated: {}", kpiCodeCommaSeparated);
+         logger.info("Counter Id Comma Separated: {}", counterIdCommaSeparated);
+      }
 
       Map<String, List<String>> kpiGroupMap = new HashMap<>();
       if (!kpiCodeCommaSeparated.isEmpty()) {
@@ -136,13 +161,15 @@ public class OTFExtractConfiguration extends Processor {
       String kpiGroup = new ObjectMapper().writeValueAsString(kpiGroupMap);
       jobContext.setParameters("EXCEL_HEADER_GROUP", kpiGroup);
 
-      logger.error("KPI Group Map: {}", kpiGroupMap);
-      logger.error("KPI Details Map: {}", kpiDetailsMap);
-      logger.error("Counter Details Map: {}", counterDetailsMap);
-      logger.error("KPI Code List: {}", kpiCodeList);
-      logger.error("Counter Id List: {}", counterIdList);
-      logger.error("KPI Code With KPI Name Map: {}", kpiCodeWithKpiNameMap);
-      logger.error("Counter Id With Counter Name Map: {}", counterIdWithCounterNameMap);
+      if (IS_LOG_ENABLED) {
+         logger.info("KPI Group Map: {}", kpiGroupMap);
+         logger.info("KPI Details Map: {}", kpiDetailsMap);
+         logger.info("Counter Details Map: {}", counterDetailsMap);
+         logger.info("KPI Code List: {}", kpiCodeList);
+         logger.info("Counter Id List: {}", counterIdList);
+         logger.info("KPI Code With KPI Name Map: {}", kpiCodeWithKpiNameMap);
+         logger.info("Counter Id With Counter Name Map: {}", counterIdWithCounterNameMap);
+      }
 
       String reportWidgetDetails = new ObjectMapper().writeValueAsString(reportWidgetDetailsMap);
       String nodeAndAggregationDetails = new ObjectMapper().writeValueAsString(nodeAndAggregationDetailsMap);
@@ -171,20 +198,27 @@ public class OTFExtractConfiguration extends Processor {
       String toDate = extraParametersMap.get("TO_DATE");
 
       String timeKeysCommaSeparated = getTimeKeys(fromDate, toDate, jobContext);
-      logger.error("Time Keys Comma Separated: {}", timeKeysCommaSeparated);
+      if (IS_LOG_ENABLED) {
+         logger.info("Time Keys Comma Separated: {}", timeKeysCommaSeparated);
+      }
       jobContext.setParameters("TIME_KEYS_COMMA_SEPARATED", timeKeysCommaSeparated);
 
-      String isKpiCodeListEmpty = kpiCodeList.isEmpty() ? "true" : "false";
+      // Fix: logic should indicate "true" if kpiCodeList is truly empty, even if the
+      // list itself prints as []
+      boolean isEmpty = (kpiCodeList == null || kpiCodeList.isEmpty());
+      logger.info("Is KPI Code List Empty: {}", isEmpty);
+      String isKpiCodeListEmpty = isEmpty ? "true" : "false";
+      logger.info("Is KPI Code List Empty: {}", isKpiCodeListEmpty);
+      // logger.info("Is KPI Code List Empty===>{}, kpiCodeList===>{}",
+      // isKpiCodeListEmpty, kpiCodeList);
       jobContext.setParameters("IS_KPI_CODE_LIST_EMPTY", isKpiCodeListEmpty);
 
       String aggregationLevel = getAggregationLevel(reportWidgetDetailsMap, nodeAndAggregationDetailsMap, jobContext);
       String geoL1 = nodeAndAggregationDetailsMap.get("GEOGRAPHY_L1");
       if (geoL1.equalsIgnoreCase("CUSTOM")) {
-         // No Need Of Sub-Category Here
          String node = nodeAndAggregationDetailsMap.get("NODE");
          String mo = nodeAndAggregationDetailsMap.get("MO");
          if (node.contains("INDIVIDUAL")) {
-            // If Node
             if (mo.contains("INDIVIDUAL")) {
                aggregationLevel = "NAM";
             } else {
@@ -192,14 +226,15 @@ public class OTFExtractConfiguration extends Processor {
             }
 
          } else {
-            // Node Aggregated
             aggregationLevel = "L0";
          }
       } else {
          aggregationLevel = updateAggregationLevel(aggregationLevel, jobContext, reportWidgetDetailsMap);
       }
 
-      logger.error("Aggregation Level: {} Set to Job Context Successfully!", aggregationLevel);
+      if (IS_LOG_ENABLED) {
+         logger.info("Aggregation Level: {} Set to Job Context Successfully!", aggregationLevel);
+      }
 
       jobContext.setParameters("AGGREGATION_LEVEL", aggregationLevel);
       if ((aggregationLevel.equalsIgnoreCase("H1") || aggregationLevel.equalsIgnoreCase("NAM"))
@@ -212,48 +247,25 @@ public class OTFExtractConfiguration extends Processor {
       String metaColumns = new ObjectMapper().writeValueAsString(metaColumnsMap);
       jobContext.setParameters("META_COLUMNS", metaColumns);
 
+      // If KPI list is empty, skip KPI computation and proceed with counters only
       if (isKpiCodeListEmpty.equals("true")) {
-         logger.error("KPI Code List is Empty! No Need Of KPI Computation!");
+         if (IS_LOG_ENABLED) {
+            logger.info("KPI Code List is Empty! No Need Of KPI Computation!");
+         }
 
          proceedWithOnlyCounterNodeAndTimeAggregation(jobContext, timeKeysCommaSeparated);
 
          Map<String, Map<String, String>> kpiFormulaFinalMap = new HashMap<>();
 
-         logger.error("KPI Formula Final Map: {}", kpiFormulaFinalMap);
+         if (IS_LOG_ENABLED) {
+            logger.info("KPI Formula Final Map: {}", kpiFormulaFinalMap);
+         }
          String KPI_FORMULA_MAP_JSON = new ObjectMapper().writeValueAsString(kpiFormulaFinalMap);
          jobContext.setParameters("KPI_FORMULA_MAP", KPI_FORMULA_MAP_JSON);
 
          return this.dataFrame;
 
       }
-
-      // Added To Achieve The KPI With Sub KPI And Time Shift With Sub KPI
-
-      // Set<String> normalKPIs = new HashSet<>();
-      // Set<String> timeShiftedKPIs = new HashSet<>();
-      // Set<String> kpiCodeSet = new HashSet<>(kpiCodeList);
-      // getNormalAndTimeShiftKPIs(kpiCodeSet, normalKPIs, timeShiftedKPIs,
-      // jobContext);
-      // logger.error("Normal KPIs: {}", normalKPIs);
-      // logger.error("Time Shifted KPIs: {}", timeShiftedKPIs);
-
-      // Set<String> kpiWithSubKPI = new HashSet<>();
-      // kpiWithSubKPI = getNormalSubkpiWithKPI(normalKPIs, kpiWithSubKPI,
-      // timeShiftedKPIs, jobContext);
-      // logger.error("KPI With Sub KPI: {}", kpiWithSubKPI);
-
-      // Set<String> timeShiftWithSubkpi = new HashSet<>();
-      // Map<String, Set<String>> map = new HashMap<>();
-      // timeShiftWithSubkpi = getTimeShiftSubkpiWithKPI(timeShiftedKPIs,
-      // timeShiftWithSubkpi, map, jobContext);
-      // logger.error("Time Shift With Sub KPI: {}", timeShiftWithSubkpi);
-
-      // Set<String> timeShiftkpiIds = timeShiftWithSubkpi.stream().filter(e ->
-      // !e.contains("TimeShift"))
-      // .collect(Collectors.toSet());
-      // logger.error("TimeShift KPI IDs={} ", timeShiftkpiIds);
-
-      // UPTO HERE
 
       Map<String, Map<String, String>> nodeTimeAggrMap = getNodeTimeAggrList(counterDetailsMap, jobContext);
 
@@ -262,8 +274,10 @@ public class OTFExtractConfiguration extends Processor {
       counterInfoMap = getCounterInfoMap(jobContext, reportWidgetDetailsMap,
             kpiCodeCommaSeparated);
 
-      logger.error("Node Time Aggr Map: {}", nodeTimeAggrMap);
-      logger.error("Counter Info Map: {}", counterInfoMap);
+      if (IS_LOG_ENABLED) {
+         logger.info("Node Time Aggr Map: {}", nodeTimeAggrMap);
+         logger.info("Counter Info Map: {}", counterInfoMap);
+      }
 
       String COUNTER_INFO_MAP_JSON = new ObjectMapper().writeValueAsString(counterInfoMap);
       jobContext.setParameters("COUNTER_INFO_MAP", COUNTER_INFO_MAP_JSON);
@@ -271,11 +285,15 @@ public class OTFExtractConfiguration extends Processor {
       String CATEGORY_LIST = counterInfoMap.entrySet().stream().map(e -> e.getValue().get("CATEGORY_NAME"))
             .distinct().collect(Collectors.joining(","));
 
-      logger.error("Category List: {}", CATEGORY_LIST);
+      if (IS_LOG_ENABLED) {
+         logger.info("Category List: {}", CATEGORY_LIST);
+      }
       jobContext.setParameters("CATEGORY_LIST", CATEGORY_LIST);
 
       Map<String, List<Map<String, String>>> catgoryInfoMap = getCatgoryInfoMap(counterInfoMap);
-      logger.error("Catgory Info Map: {}", catgoryInfoMap);
+      if (IS_LOG_ENABLED) {
+         logger.info("Catgory Info Map: {}", catgoryInfoMap);
+      }
 
       String CATEGORY_INFO_MAP_JSON = new ObjectMapper().writeValueAsString(catgoryInfoMap);
       jobContext.setParameters("CATEGORY_INFO_MAP", CATEGORY_INFO_MAP_JSON);
@@ -283,12 +301,16 @@ public class OTFExtractConfiguration extends Processor {
       getPMCounterVariableAggrQuery(jobContext, frequency, timeKeysCommaSeparated, nodeTimeAggrMap);
 
       String kpiCodesCommaSeparated = kpiCodeList.stream().collect(Collectors.joining(","));
-      logger.error("KPI Codes Comma Separated: {}", kpiCodesCommaSeparated);
+      if (IS_LOG_ENABLED) {
+         logger.info("KPI Codes Comma Separated: {}", kpiCodesCommaSeparated);
+      }
 
       Map<String, Map<String, String>> kpiFormulaFinalMap = getKpiFormulaMap(kpiCodesCommaSeparated,
             reportWidgetDetailsMap, jobContext);
 
-      logger.error("KPI Formula Final Map: {}", kpiFormulaFinalMap);
+      if (IS_LOG_ENABLED) {
+         logger.info("KPI Formula Final Map: {}", kpiFormulaFinalMap);
+      }
       String KPI_FORMULA_MAP_JSON = new ObjectMapper().writeValueAsString(kpiFormulaFinalMap);
       jobContext.setParameters("KPI_FORMULA_MAP", KPI_FORMULA_MAP_JSON);
 
@@ -296,7 +318,9 @@ public class OTFExtractConfiguration extends Processor {
             .map(e -> "C" + e.getValue().get("SEQUENCE_NO") + "#" + e.getValue().get("PM_COUNTER_VARIABLE_ID_PK"))
             .distinct().collect(Collectors.joining(","));
 
-      logger.error("Final Counter Info: {}", finalCounterInfo);
+      if (IS_LOG_ENABLED) {
+         logger.info("Final Counter Info: {}", finalCounterInfo);
+      }
 
       jobContext.setParameters("FINAL_COUNTER_INFO", finalCounterInfo);
 
@@ -319,168 +343,54 @@ public class OTFExtractConfiguration extends Processor {
          String subCatHeader = moHierarchyObject.optString("subCatHeader", "");
          String subCatValue = moHierarchyObject.optString("subCatValue", "");
          String subCategoryIndex = moHierarchyObject.optString("subCategoryIndex", "");
-         logger.error("Sub Cat Header: {}, Sub Cat Value: {}, Sub Category Index: {}", subCatHeader, subCatValue,
-               subCategoryIndex);
+         if (IS_LOG_ENABLED) {
+            logger.info("Sub Cat Header: {}, Sub Cat Value: {}, Sub Category Index: {}", subCatHeader, subCatValue,
+                  subCategoryIndex);
+         }
 
          if (subCategoryIndex.equalsIgnoreCase("1") && subCatValue.contains("INDIVIDUAL")) {
             aggregationLevel = "NAM";
-            logger.error("Aggregation Level Updated To: {}", aggregationLevel);
+            if (IS_LOG_ENABLED) {
+               logger.info("Aggregation Level Updated To: {}", aggregationLevel);
+            }
             break;
          } else if (subCategoryIndex.equalsIgnoreCase("1") && !subCatValue.contains("INDIVIDUAL")) {
             aggregationLevel = "H1";
-            logger.error("Aggregation Level Updated To: {}", aggregationLevel);
+            if (IS_LOG_ENABLED) {
+               logger.info("Aggregation Level Updated To: {}", aggregationLevel);
+            }
             break;
          }
       }
       return aggregationLevel;
    }
 
-   private Set<String> getTimeShiftSubkpiWithKPI(Set<String> timeShiftKPI, Set<String> kpiWithSubKPI,
-         Map<String, Set<String>> map, JobContext jobContext) {
-
-      logger.error("Getting Time Shift KPI with Sub KPI: Time Shift KPI={}, KPI With Sub KPI={}, Map={}", timeShiftKPI,
-            kpiWithSubKPI, map);
-
-      Map<String, String> contextMap = jobContext.getParameters();
-      Connection connection = null;
-      PreparedStatement preparedStatement = null;
-      ResultSet resultSet = null;
-
-      Set<String> subkpi = new HashSet<>();
-      String timeShiftKPIs = Joiner.on(",").join(timeShiftKPI);
-
-      String query = "SELECT KPI_FORMULA_DESC, KPI_CODE FROM KPI_FORMULA WHERE KPI_CODE IN ('"
-            + timeShiftKPIs.replace(",", "','") + "')";
-
-      logger.error("MySQL Query To Get TimeShift KPI With Sub KPI: {}", query);
-      try {
-         final String jdbcDriver = contextMap.get("SPARK_PM_JDBC_DRIVER");
-         final String jdbcUrl = contextMap.get("SPARK_PM_JDBC_URL");
-         final String jdbcUsername = contextMap.get("SPARK_PM_JDBC_USERNAME");
-         final String jdbcPassword = contextMap.get("SPARK_PM_JDBC_PASSWORD");
-
-         Class.forName(jdbcDriver);
-         connection = DriverManager.getConnection(jdbcUrl, jdbcUsername, jdbcPassword);
-         preparedStatement = connection.prepareStatement(query);
-         resultSet = preparedStatement.executeQuery();
-         while (resultSet.next()) {
-            if (!StringUtils.isEmpty(resultSet.getString(1)) && !resultSet.getString(1).equalsIgnoreCase("null")) {
-               logger.error("KPI Formula Desc: {}", resultSet.getString(1));
-               subkpi = getSubKPICodeForTimeShift(resultSet.getString(1));
-               logger.error("Sub KPI: {}", subkpi);
-               kpiWithSubKPI.addAll(subkpi);
-               logger.error("Added KPI With Sub KPI: {}", kpiWithSubKPI);
-               getPossibleSubKpiListForTimeShift1(map, kpiWithSubKPI, resultSet.getString(2), subkpi);
-               logger.error("KPI With Sub KPI: {}", kpiWithSubKPI);
-            }
-         }
-         if (!subkpi.isEmpty()) {
-            getTimeShiftMap(map, subkpi);
-            logger.error("Time Shift Map: {}", map);
-         }
-         if (subkpi != null && !subkpi.isEmpty()) {
-            logger.error(
-                  "Sub KPI is not Empty, Getting Time Shift KPI with Sub KPI: Sub KPI={}, KPI With Sub KPI={}, Map={}",
-                  subkpi, kpiWithSubKPI, map);
-            kpiWithSubKPI = getTimeShiftSubkpiWithKPI(subkpi, kpiWithSubKPI, map, jobContext);
-            logger.error("KPI With Sub KPI: {}", kpiWithSubKPI);
-         }
-         kpiWithSubKPI.addAll(timeShiftKPI);
-      } catch (Exception e) {
-         logger.error("Exception While Getting TimeShift KPI with Sub KPI, Message={}, Error={}", e.getMessage(), e);
-      } finally {
-         close(connection, preparedStatement, resultSet);
-      }
-      return kpiWithSubKPI;
-   }
-
-   private void getTimeShiftMap(Map<String, Set<String>> map, Set<String> subKpiListForTimeShift) {
-      logger.error("Getting Time Shift Map: Map={}, Sub KPI List For Time Shift={}", map, subKpiListForTimeShift);
-      for (String subkpiList : subKpiListForTimeShift) {
-         String[] subKpi = subkpiList.split("\\)\\).");
-         try {
-            if (map.containsKey(subKpi[0])) {
-               Set<String> list = map.get(subKpi[0]);
-               list.add(subKpi[1]);
-               map.put(subKpi[0], list);
-            } else {
-               Set<String> ls = new HashSet<>();
-               ls.add(subKpi[1]);
-               map.put(subKpi[0], ls);
-            }
-         } catch (Exception e1) {
-            if (map.containsKey(subKpi[0])) {
-               Set<String> ls = map.get(subKpi[0]);
-               ls.add("0");
-               map.put(subKpi[0], ls);
-            } else {
-               Set<String> ls = new HashSet<>();
-               ls.add("0");
-               map.put(subKpi[0], ls);
-            }
-         }
-      }
-      logger.error("Time Shift Map: {}", map);
-   }
-
-   private void getPossibleSubKpiListForTimeShift1(Map<String, Set<String>> map, Set<String> subKpiListForTimeShift,
-         String kpiCode, Set<String> temp) {
-      logger.error(
-            "Getting Possible Sub KPI List For Time Shift: Map={}, Sub KPI List For Time Shift={}, KPI Code={}, Temp={}",
-            map, subKpiListForTimeShift, kpiCode, temp);
-      if (map.containsKey(kpiCode)) {
-         Set<String> possibleTimeShift = map.get(kpiCode);
-         for (String subKpi : temp) {
-            for (String possibleValue : possibleTimeShift) {
-               if (!possibleValue.equalsIgnoreCase("0")) {
-                  subKpiListForTimeShift.add(subKpi + "))." + possibleValue);
-               }
-            }
-         }
-      }
-   }
-
-   // public static Set<String> getSubKPICodeForTimeShift(String kpiFormulaDesc) {
-   // logger.error("Getting Sub KPI Code For Time Shift: KPI Formula Desc={}",
-   // kpiFormulaDesc);
-   // Set<String> kpicodeList = new HashSet<>();
-   // if (kpiFormulaDesc.contains("KPI#")) {
-   // kpicodeList.addAll(Arrays.stream(kpiFormulaDesc.split("KPI"))
-   // .filter(e -> e.contains("TimeShift") && e.contains("#"))
-   // .map(e -> StringUtils.substringBetween(e, "#", ")")
-   // + ")).TimeShift("
-   // + StringUtils.substringBetween(e, "TimeShift(", ")"))
-   // .distinct().collect(Collectors.toSet()));
-   // kpicodeList.addAll(Arrays.stream(kpiFormulaDesc.split("KPI"))
-   // .filter(e -> e.contains(")") && e.contains("#"))
-   // .map(e -> StringUtils
-   // .substringBefore(StringUtils.substringBefore(e, ")"), ".")
-   // .replace("#", ""))
-   // .distinct().collect(Collectors.toSet()));
-   // }
-   // logger.error("Sub KPI Code For Time Shift: {}", kpicodeList);
-   // return kpicodeList;
-   // }
    public static Set<String> getSubKPICodeForTimeShift(String kpiFormulaDesc) {
-      logger.error("Getting Sub KPI Code For Time Shift: KPI Formula Desc={}", kpiFormulaDesc);
+      if (IS_LOG_ENABLED) {
+         logger.info("Getting Sub KPI Code For Time Shift: KPI Formula Desc={}", kpiFormulaDesc);
+      }
       Set<String> kpicodeList = new HashSet<>();
       if (kpiFormulaDesc.contains("KPI#")) {
          kpicodeList.addAll(Arrays.stream(kpiFormulaDesc.split("KPI#"))
-               .filter(e -> e.contains("TimeShift")) // ensure it's a timeshift KPI
-               .map(e -> StringUtils.substringBefore(e, ")")) // take until closing bracket
-               .map(e -> e.replaceAll("[^0-9]", "")) // keep only digits
+               .filter(e -> e.contains("TimeShift"))
+               .map(e -> StringUtils.substringBefore(e, ")"))
+               .map(e -> e.replaceAll("[^0-9]", ""))
                .filter(e -> !e.isEmpty())
                .collect(Collectors.toSet()));
       }
-      logger.error("Sub KPI Code For Time Shift: {}", kpicodeList);
+      if (IS_LOG_ENABLED) {
+         logger.info("Sub KPI Code For Time Shift: {}", kpicodeList);
+      }
       return kpicodeList;
    }
 
    private Set<String> getNormalSubkpiWithKPI(Set<String> kpiCode, Set<String> kpiWithSubKPI,
          Set<String> timeShiftKPI, JobContext jobContext) {
 
-      logger.error("Getting Normal KPI with Sub KPI: KPI Code={}, KPI With Sub KPI={}, Time Shift KPI={}", kpiCode,
-            kpiWithSubKPI, timeShiftKPI);
+      if (IS_LOG_ENABLED) {
+         logger.info("Getting Normal KPI with Sub KPI: KPI Code={}, KPI With Sub KPI={}, Time Shift KPI={}", kpiCode,
+               kpiWithSubKPI, timeShiftKPI);
+      }
 
       Map<String, String> contextMap = jobContext.getParameters();
       Connection connection = null;
@@ -494,7 +404,9 @@ public class OTFExtractConfiguration extends Processor {
             + kpiCodes.replace(",", "','")
             + "')";
 
-      logger.error("MySQL Query To Get Sub KPI Formula Desc With KPI: {}", query);
+      if (IS_LOG_ENABLED) {
+         logger.info("MySQL Query To Get Sub KPI Formula Desc With KPI: {}", query);
+      }
       try {
          final String jdbcDriver = contextMap.get("SPARK_PM_JDBC_DRIVER");
          final String jdbcUrl = contextMap.get("SPARK_PM_JDBC_URL");
@@ -508,23 +420,47 @@ public class OTFExtractConfiguration extends Processor {
          while (resultSet.next()) {
             if (!StringUtils.isEmpty(resultSet.getString(1)) && !resultSet.getString(1).equalsIgnoreCase("null")
                   && !resultSet.getString(1).contains("TimeShift")) {
-               subkpi = getSubKPICode(resultSet.getString(1));
+
+               String kpiFormulaDesc = resultSet.getString(1);
+               if (IS_LOG_ENABLED) {
+                  logger.info("KPI Formula Desc: {}", kpiFormulaDesc);
+               }
+               subkpi = getSubKPICode(kpiFormulaDesc);
+               if (IS_LOG_ENABLED) {
+                  logger.info("Sub KPI: {}", subkpi);
+               }
                kpiWithSubKPI.addAll(subkpi);
             } else {
                timeShiftKPI.add(resultSet.getString(2));
             }
          }
-         logger.error("Sub KPI: {}", subkpi);
-         logger.error("KPI With Sub KPI: {}", kpiWithSubKPI);
-         logger.error("Time Shift KPI: {}", timeShiftKPI);
-         if (subkpi != null && !subkpi.isEmpty()) {
-            logger.error(
+
+         if (IS_LOG_ENABLED) {
+            logger.info("KPI With Sub KPI: {}", kpiWithSubKPI);
+            logger.info("Time Shift KPI: {}", timeShiftKPI);
+            logger.info(
                   "Sub KPI is not Empty, Getting Normal KPI with Sub KPI: Sub KPI={}, KPI With Sub KPI={}, Time Shift KPI={}",
-                  subkpi,
-                  kpiWithSubKPI, timeShiftKPI);
+                  subkpi, kpiWithSubKPI, timeShiftKPI);
+         }
+         if (subkpi != null && !subkpi.isEmpty()) {
+            if (IS_LOG_ENABLED) {
+               logger.info(
+                     "Sub KPI is not Empty, Getting Normal KPI with Sub KPI: Sub KPI={}, KPI With Sub KPI={}, Time Shift KPI={}",
+                     subkpi,
+                     kpiWithSubKPI, timeShiftKPI);
+            }
             kpiWithSubKPI = getNormalSubkpiWithKPI(subkpi, kpiWithSubKPI, timeShiftKPI, jobContext);
          }
-         kpiWithSubKPI.addAll(Arrays.asList(kpiCodes.split(",")));
+         // Avoid adding empty token when no KPI codes were provided
+         if (kpiCodes != null && !kpiCodes.trim().isEmpty()) {
+            kpiWithSubKPI.addAll(Arrays.stream(kpiCodes.split(","))
+                  .map(String::trim)
+                  .filter(s -> !s.isEmpty())
+                  .collect(Collectors.toSet()));
+         }
+         if (IS_LOG_ENABLED) {
+            logger.info("Final KPI With Sub KPI Set: {}", kpiWithSubKPI);
+         }
       } catch (Exception e) {
          logger.error("Exception While Getting Normal KPI with Sub KPI, Message={}, Error={}", e.getMessage(), e);
       } finally {
@@ -534,63 +470,22 @@ public class OTFExtractConfiguration extends Processor {
    }
 
    public static Set<String> getSubKPICode(String kpiFormulaDesc) {
+      if (IS_LOG_ENABLED) {
+         logger.info("Getting Sub KPI Code: KPI Formula Desc={}", kpiFormulaDesc);
+      }
       Set<String> kpicodeList = new HashSet<>();
       if (kpiFormulaDesc.contains("KPI#")) {
-         final Pattern operatorPattern = Pattern.compile("KPI#(G?[0-9]{0,4})");
+         final Pattern operatorPattern = Pattern.compile("KPI#(?:G)?(\\d+)");
          final Matcher operatorMatcher = operatorPattern.matcher(kpiFormulaDesc);
          while (operatorMatcher.find()) {
             String matchkey = operatorMatcher.group(1);
             kpicodeList.add(matchkey);
          }
       }
-      return kpicodeList;
-   }
-
-   private void getNormalAndTimeShiftKPIs(Set<String> kpiCode, Set<String> normalKPIs, Set<String> timeShiftedKPIs,
-         JobContext jobContext) {
-
-      logger.error("Getting Normal And TimeShift KPIs: KPI Code={}, Normal KPIs={}, TimeShift KPIs={}", kpiCode,
-            normalKPIs, timeShiftedKPIs);
-
-      Map<String, String> contextMap = jobContext.getParameters();
-      Connection connection = null;
-      PreparedStatement preparedStatement = null;
-      ResultSet resultSet = null;
-
-      String kpiCodes = Joiner.on(",").join(kpiCode);
-      String query = "SELECT KPI_FORMULA_DESC, KPI_CODE FROM KPI_FORMULA WHERE KPI_CODE IN ('"
-            + kpiCodes.replace(",", "','")
-            + "')";
-
-      logger.error("MySQL Query To Get KPI Formula Desc: {}", query);
-
-      try {
-         final String jdbcDriver = contextMap.get("SPARK_PM_JDBC_DRIVER");
-         final String jdbcUrl = contextMap.get("SPARK_PM_JDBC_URL");
-         final String jdbcUsername = contextMap.get("SPARK_PM_JDBC_USERNAME");
-         final String jdbcPassword = contextMap.get("SPARK_PM_JDBC_PASSWORD");
-
-         logger.error("JDBC Driver={}, JDBC URL={}, JDBC Username={}, JDBC Password={}", jdbcDriver, jdbcUrl,
-               jdbcUsername, jdbcPassword);
-
-         Class.forName(jdbcDriver);
-         connection = DriverManager.getConnection(jdbcUrl, jdbcUsername, jdbcPassword);
-         preparedStatement = connection.prepareStatement(query);
-         resultSet = preparedStatement.executeQuery();
-         while (resultSet.next()) {
-            if (!StringUtils.isEmpty(resultSet.getString(1)) && resultSet.getString(1).contains("TimeShift")) {
-               timeShiftedKPIs.add(resultSet.getString(2));
-            } else {
-               normalKPIs.add(resultSet.getString(2));
-            }
-         }
-
-      } catch (Exception e) {
-         logger.error("Exception While Getting Normal KPI and TimeShift KPI, Message={}, Error={}", e.getMessage(),
-               e);
-      } finally {
-         close(connection, preparedStatement, resultSet);
+      if (IS_LOG_ENABLED) {
+         logger.info("Sub KPI Code List: {}", kpicodeList);
       }
+      return kpicodeList;
    }
 
    private static void close(Connection connection, PreparedStatement preparedStatement, ResultSet resultSet) {
@@ -616,32 +511,23 @@ public class OTFExtractConfiguration extends Processor {
 
    public static Map<String, List<String>> getKpiGroupMap(String configuration) {
       Map<String, List<String>> kpiGroupMap = new HashMap<>();
-
-      // Ensure Valid JSON By Replacing Single Quotes With Double Quotes
       String fixedJson = configuration.replace("'", "\"");
       JSONObject jsonObject = new JSONObject(fixedJson);
 
-      // Early Return For CSV Report Format
       String reportFormatType = jsonObject.optString("reportFormatType", "").trim();
       if (reportFormatType.equalsIgnoreCase("csv")) {
          return kpiGroupMap;
       }
 
-      // Proceed For Excel Report Format
       JSONArray kpiArray = jsonObject.optJSONArray("kpi");
       if (kpiArray == null) {
          return kpiGroupMap;
       }
 
-      // Temporary Map To Hold HeaderName → Group
       Map<String, String> individualKpiGroupMap = new LinkedHashMap<>();
 
       for (int i = 0; i < kpiArray.length(); i++) {
          JSONObject kpiObject = kpiArray.getJSONObject(i);
-
-         // String type = kpiObject.optString("type", "").trim();
-         // if (type.equalsIgnoreCase("KPI")) {
-         // Try HeaderName First, Fallback To KpiName
          String headerName = kpiObject.optString("headerName", "").trim();
          if (headerName.isEmpty()) {
             headerName = kpiObject.optString("kpiName", "N/A").trim();
@@ -653,10 +539,8 @@ public class OTFExtractConfiguration extends Processor {
          }
 
          individualKpiGroupMap.put(headerName, kpiGroup);
-         // }
       }
 
-      // Group HeaderNames By Group Key
       for (Map.Entry<String, String> entry : individualKpiGroupMap.entrySet()) {
          String headerName = entry.getKey();
          String group = entry.getValue();
@@ -664,9 +548,11 @@ public class OTFExtractConfiguration extends Processor {
          kpiGroupMap.computeIfAbsent(group, k -> new ArrayList<>()).add(headerName);
       }
 
-      logger.error("Individual KPI Group Map: {}", individualKpiGroupMap);
-      logger.error("Distinct Groups: {}", kpiGroupMap.keySet());
-      logger.error("KPI Group Map: {}", kpiGroupMap);
+      if (IS_LOG_ENABLED) {
+         logger.info("Individual KPI Group Map: {}", individualKpiGroupMap);
+         logger.info("Distinct Groups: {}", kpiGroupMap.keySet());
+         logger.info("KPI Group Map: {}", kpiGroupMap);
+      }
 
       return kpiGroupMap;
    }
@@ -739,6 +625,12 @@ public class OTFExtractConfiguration extends Processor {
 
    private static Map<String, Map<String, String>> getNodeTimeAggrList(Map<String, String> nodeAndAggregationDetailsMap,
          JobContext jobContext) {
+
+      if (IS_LOG_ENABLED) {
+         logger.info("Getting Node And Time Aggregation List: Node And Aggregation Details Map: {}",
+               nodeAndAggregationDetailsMap);
+      }
+
       Map<String, Map<String, String>> result = new HashMap<>();
 
       if (nodeAndAggregationDetailsMap == null || nodeAndAggregationDetailsMap.isEmpty()) {
@@ -776,21 +668,20 @@ public class OTFExtractConfiguration extends Processor {
 
       return result;
    }
-
+   
    private static void proceedWithOnlyCounterNodeAndTimeAggregation(JobContext jobContext,
          String timeKeysCommaSeparated) {
 
       String frequency = jobContext.getParameter("FREQUENCY");
 
-      logger.error("Get PM Counter Variable Aggr Query, With Frequency={}", frequency);
+      if (IS_LOG_ENABLED) {
+         logger.info("Get PM Counter Variable Aggr Query, With Frequency===>{}", frequency);
+      }
 
       StringBuilder NODE_AGGREGATION_QUERY_BUILDER = new StringBuilder();
       StringBuilder COUNTER_WITH_NODE_AGGR_BUILDER = new StringBuilder();
       StringBuilder COUNTER_WITH_TIME_AGGR_BUILDER = new StringBuilder();
       StringBuilder FILTER_QUERY_BUILDER = new StringBuilder();
-
-      COUNTER_WITH_NODE_AGGR_BUILDER.append(
-            " SELECT fiveMinuteKey, quarterKey, dateKey, hourKey, finalKey, categoryname, NAM, FIRST_VALUE(metaData) AS metaData, ");
 
       StringBuilder mapQuery = new StringBuilder();
       String COUNTER_QUERY_MAP = null;
@@ -815,12 +706,21 @@ public class OTFExtractConfiguration extends Processor {
       }
 
       String counterDetailsMapJson = jobContext.getParameter("COUNTER_DETAILS");
+      logger.info("Counter Details Map JSON: {}", counterDetailsMapJson);
 
       List<Map<String, String>> counterDetailsList = getCounterDetailsList(counterDetailsMapJson);
 
-      logger.error("Counter Details List: {}", counterDetailsList);
-
+      if (IS_LOG_ENABLED) {
+         logger.info("Counter Details List: {}", counterDetailsList);
+      }
       Map<String, Map<String, String>> counterInfoMap = new HashMap<>();
+      if (upperFreq.equalsIgnoreCase("5 MIN") || upperFreq.equalsIgnoreCase("FIVEMIN")) {
+         COUNTER_WITH_NODE_AGGR_BUILDER.append(
+               " SELECT fiveminutekey, quarterKey, dateKey, hourKey, finalKey, categoryname, NAM, FIRST_VALUE(metaData) AS metaData, ");
+      } else {
+         COUNTER_WITH_NODE_AGGR_BUILDER.append(
+               " SELECT quarterKey, dateKey, hourKey, finalKey, categoryname, NAM, FIRST_VALUE(metaData) AS metaData, ");
+      }
 
       for (Map<String, String> counterDetails : counterDetailsList) {
          String kpiCounterIdPk = counterDetails.get("KPI_COUNTER_ID_PK");
@@ -842,7 +742,9 @@ public class OTFExtractConfiguration extends Processor {
                   .append("`, '").append(counterId).append("', `").append(counterKey).append("`, ");
          }
 
-         logger.error("Generated Map Query={}", mapQuery);
+         if (IS_LOG_ENABLED) {
+            logger.info("Generated Map Query={}", mapQuery);
+         }
 
          String date = timeKeysCommaSeparated;
 
@@ -902,14 +804,15 @@ public class OTFExtractConfiguration extends Processor {
             .map(e -> "C" + e.getValue().get("SEQUENCE_NO") + "#" + e.getValue().get("KPI_COUNTER_ID_PK"))
             .distinct().collect(Collectors.joining(","));
 
-      logger.error("Final Counter Info: {}", finalCounterInfo);
       jobContext.setParameters("FINAL_COUNTER_INFO", finalCounterInfo);
 
-      logger.error("COUNTER_WITH_NODE_AGGR_BUILDER={}", COUNTER_WITH_NODE_AGGR_BUILDER);
-      logger.error("COUNTER_WITH_TIME_AGGR_BUILDER={}", COUNTER_WITH_TIME_AGGR_BUILDER);
-      logger.error("NODE_AGGREGATION_QUERY_BUILDER={}", NODE_AGGREGATION_QUERY_BUILDER);
-      logger.error("FILTER_QUERY_BUILDER={}", FILTER_QUERY_BUILDER);
-      logger.error("MAP_QUERY={}", mapQuery);
+      if (IS_LOG_ENABLED) {
+         logger.info("COUNTER_WITH_NODE_AGGR_BUILDER=>{}", COUNTER_WITH_NODE_AGGR_BUILDER);
+         logger.info("COUNTER_WITH_TIME_AGGR_BUILDER={}", COUNTER_WITH_TIME_AGGR_BUILDER);
+         logger.info("NODE_AGGREGATION_QUERY_BUILDER={}", NODE_AGGREGATION_QUERY_BUILDER);
+         logger.info("FILTER_QUERY_BUILDER={}", FILTER_QUERY_BUILDER);
+         logger.info("MAP_QUERY={}", mapQuery);
+      }
 
       String mapQueryStr = mapQuery.toString();
       int lastCommaIndex = mapQueryStr.lastIndexOf(",");
@@ -934,16 +837,209 @@ public class OTFExtractConfiguration extends Processor {
             ? FILTER_QUERY.trim().substring(0, FILTER_QUERY.trim().length() - 1)
             : FILTER_QUERY;
 
-      String COUNTER_NODE_AGGR_QUERY = "SELECT finalKey, FIRST_VALUE(metaData) AS metaData, " + NODE_AGGREGATION_QUERY
-            + " FROM FinalCounterData GROUP BY finalKey";
+      // NEW: Check for nemetaColumnsAggregation and selectedHeader='custom'
+      String selectedHeader = jobContext.getParameter("selectedHeader");
+      selectedHeader = selectedHeader == null ? "default" : selectedHeader;
+      String nemetaColumnsAggregation = jobContext.getParameter("NEMETA_COLUMNS_AGGREGATION");
+      nemetaColumnsAggregation = nemetaColumnsAggregation == null ? "false" : nemetaColumnsAggregation;
+      String nemetaGroupColumns = jobContext.getParameter("NEMETA_GROUP_COLUMNS");
+      nemetaGroupColumns = nemetaGroupColumns == null ? "" : nemetaGroupColumns.trim();
+
+      // LEGACY: Check for customAggregation (backward compatibility)
+      String customAggFlagNode = jobContext.getParameter("CUSTOM_AGGREGATION");
+      String groupCenterKeysNode = jobContext.getParameter("GROUP_CENTER_KEYS");
+      if (customAggFlagNode == null)
+         customAggFlagNode = "false";
+      if (groupCenterKeysNode == null)
+         groupCenterKeysNode = "";
+
+      StringBuilder nodeSelectExtra = new StringBuilder();
+      java.util.List<String> nodeGroupExprs = new java.util.ArrayList<>();
+
+      // NEW LOGIC: Use nemeta_groupColumns when selectedHeader='custom' and
+      // nemetaColumnsAggregation=true
+      boolean useNemetaForNode = selectedHeader.equalsIgnoreCase("custom")
+            && nemetaColumnsAggregation.equalsIgnoreCase("true")
+            && !nemetaGroupColumns.trim().isEmpty();
+
+      if (useNemetaForNode) {
+         // NEW: Use nemeta_groupColumns
+         for (String key : nemetaGroupColumns.split(",")) {
+            String k = key.trim();
+            if (k.isEmpty())
+               continue;
+            boolean looksLikeM = (k.length() > 1 && (k.charAt(0) == 'M' || k.charAt(0) == 'm'));
+            boolean digits = true;
+            for (int i = 1; i < k.length(); i++) {
+               if (!Character.isDigit(k.charAt(i))) {
+                  digits = false;
+                  break;
+               }
+            }
+            if (looksLikeM && digits) {
+               String expr = "element_at(metaData,'" + k + "')";
+               nodeSelectExtra.append(", ").append(expr).append(" AS ").append(k);
+               nodeGroupExprs.add(expr);
+            }
+         }
+      } else if (customAggFlagNode.equalsIgnoreCase("true") && !groupCenterKeysNode.trim().isEmpty()) {
+         // LEGACY: Use group_center (backward compatibility)
+         for (String key : groupCenterKeysNode.split(",")) {
+            String k = key.trim();
+            if (k.isEmpty())
+               continue;
+            boolean looksLikeM = (k.length() > 1 && (k.charAt(0) == 'M' || k.charAt(0) == 'm'));
+            boolean digits = true;
+            for (int i = 1; i < k.length(); i++) {
+               if (!Character.isDigit(k.charAt(i))) {
+                  digits = false;
+                  break;
+               }
+            }
+            if (looksLikeM && digits) {
+               String expr = "element_at(metaData,'" + k + "')";
+               nodeSelectExtra.append(", ").append(expr).append(" AS ").append(k);
+               nodeGroupExprs.add(expr);
+            }
+         }
+      }
+
+      String COUNTER_NODE_AGGR_QUERY = "SELECT finalKey, FIRST_VALUE(metaData) AS metaData, "
+            + NODE_AGGREGATION_QUERY
+            + nodeSelectExtra.toString()
+            + " FROM FinalCounterData";
+
+      // Apply nemeta filters in WHERE when new logic is active
+      String whereNemetaNode = "";
+      if (useNemetaForNode && !nodeGroupExprs.isEmpty()) {
+         String rawFilters = jobContext.getParameter("NEMETA_GROUP_FILTERS");
+         if (rawFilters != null && !rawFilters.trim().isEmpty()) {
+            List<String> conds = new ArrayList<>();
+            for (String part : rawFilters.split(",")) {
+               if (part == null || part.trim().isEmpty()) continue;
+               int eqIdx = part.indexOf('=');
+               if (eqIdx > 0) {
+                  String k = part.substring(0, eqIdx).trim();
+                  String v = part.substring(eqIdx + 1).trim();
+                  // wrap value in single quotes; escape existing quotes by doubling
+                  v = v.replace("'", "''");
+                  conds.add("element_at(metaData,'" + k + "') = '" + v + "'");
+               }
+            }
+            if (!conds.isEmpty()) {
+               whereNemetaNode = " WHERE " + String.join(" AND ", conds);
+            }
+         }
+      }
+
+      COUNTER_NODE_AGGR_QUERY += whereNemetaNode + " GROUP BY finalKey";
+
+      if (upperFreq.equalsIgnoreCase("PERHOUR") || upperFreq.equalsIgnoreCase("PERDAY")) {
+         COUNTER_NODE_AGGR_QUERY += ", quarterKey";
+      }
+
+      if (!nodeGroupExprs.isEmpty()) {
+         COUNTER_NODE_AGGR_QUERY += ", " + String.join(", ", nodeGroupExprs);
+      }
 
       String FILTER_QUERY_FINAL = FILTER_QUERY;
+      String RAW_FILE_COUNTER_NODE_AGGR_QUERY = "";
 
-      String RAW_FILE_COUNTER_NODE_AGGR_QUERY = COUNTER_WITH_NODE_AGGR
-            + " FROM JOINED_RESULT GROUP BY fiveMinuteKey, quarterKey, finalKey, dateKey, hourKey, NAM, categoryname";
+      if (IS_LOG_ENABLED) {
+         logger.info("Group By Key={}", upperFreq);
+      }
+
+      if (upperFreq.equalsIgnoreCase("PERHOUR")) {
+         RAW_FILE_COUNTER_NODE_AGGR_QUERY = COUNTER_WITH_NODE_AGGR
+               + " FROM JOINED_RESULT GROUP BY quarterKey, finalKey, dateKey, hourKey, NAM, categoryname";
+      } else if (upperFreq.equalsIgnoreCase("PERDAY")) {
+
+         RAW_FILE_COUNTER_NODE_AGGR_QUERY = COUNTER_WITH_NODE_AGGR
+               + " FROM JOINED_RESULT GROUP BY quarterKey, finalKey, dateKey, hourKey, NAM, categoryname";
+
+      } else if (upperFreq.equalsIgnoreCase("15 MIN")) {
+
+         RAW_FILE_COUNTER_NODE_AGGR_QUERY = COUNTER_WITH_NODE_AGGR
+               + " FROM JOINED_RESULT GROUP BY quarterKey, finalKey, dateKey, hourKey, NAM, categoryname";
+
+      } else {
+         RAW_FILE_COUNTER_NODE_AGGR_QUERY = COUNTER_WITH_NODE_AGGR
+               + " FROM JOINED_RESULT GROUP BY fiveMinuteKey, quarterKey, finalKey, dateKey, hourKey, NAM, categoryname";
+      }
+
+      // NEW: Check for nemetaColumnsAggregation and selectedHeader='custom' for TIME
+      // aggregation
+      String selectedHeaderTime = jobContext.getParameter("selectedHeader");
+      selectedHeaderTime = selectedHeaderTime == null ? "default" : selectedHeaderTime;
+      String nemetaColumnsAggregationTime = jobContext.getParameter("NEMETA_COLUMNS_AGGREGATION");
+      nemetaColumnsAggregationTime = nemetaColumnsAggregationTime == null ? "false" : nemetaColumnsAggregationTime;
+      String nemetaGroupColumnsTime = jobContext.getParameter("NEMETA_GROUP_COLUMNS");
+      nemetaGroupColumnsTime = nemetaGroupColumnsTime == null ? "" : nemetaGroupColumnsTime.trim();
+
+      // LEGACY: Check for customAggregation (backward compatibility)
+      String customAggFlag = jobContext.getParameter("CUSTOM_AGGREGATION");
+      String groupCenterKeys = jobContext.getParameter("GROUP_CENTER_KEYS");
+      if (customAggFlag == null)
+         customAggFlag = "false";
+      if (groupCenterKeys == null)
+         groupCenterKeys = "";
+
+      StringBuilder timeSelectExtra = new StringBuilder();
+      java.util.List<String> timeGroupExprs = new java.util.ArrayList<>();
+
+      // NEW LOGIC: Use nemeta_groupColumns when selectedHeader='custom' and
+      // nemetaColumnsAggregation=true
+      boolean useNemetaForTime = selectedHeaderTime.equalsIgnoreCase("custom")
+            && nemetaColumnsAggregationTime.equalsIgnoreCase("true")
+            && !nemetaGroupColumnsTime.trim().isEmpty();
+
+      if (useNemetaForTime) {
+         // NEW: Use nemeta_groupColumns
+         for (String key : nemetaGroupColumnsTime.split(",")) {
+            String k = key.trim();
+            if (k.isEmpty())
+               continue;
+            boolean looksLikeM = (k.length() > 1 && (k.charAt(0) == 'M' || k.charAt(0) == 'm'));
+            boolean digits = true;
+            for (int i = 1; i < k.length(); i++) {
+               if (!Character.isDigit(k.charAt(i))) {
+                  digits = false;
+                  break;
+               }
+            }
+            if (looksLikeM && digits) {
+               String expr = "element_at(metaData,'" + k + "')";
+               timeSelectExtra.append(", ").append(expr).append(" AS ").append(k);
+               timeGroupExprs.add(expr);
+            }
+         }
+      } else if (customAggFlag.equalsIgnoreCase("true") && !groupCenterKeys.trim().isEmpty()) {
+         // LEGACY: Use group_center (backward compatibility)
+         for (String key : groupCenterKeys.split(",")) {
+            String k = key.trim();
+            if (k.isEmpty())
+               continue;
+            boolean looksLikeM = (k.length() > 1 && (k.charAt(0) == 'M' || k.charAt(0) == 'm'));
+            boolean digits = true;
+            for (int i = 1; i < k.length(); i++) {
+               if (!Character.isDigit(k.charAt(i))) {
+                  digits = false;
+                  break;
+               }
+            }
+            if (looksLikeM && digits) {
+               String expr = "element_at(metaData,'" + k + "')";
+               timeSelectExtra.append(", ").append(expr).append(" AS ").append(k);
+               timeGroupExprs.add(expr);
+            }
+         }
+      }
 
       String COUNTER_TIME_AGGR_QUERY = "SELECT finalKey, FIRST_VALUE(metaData) AS metaData, " + COUNTER_WITH_TIME_AGGR
-            + " FROM finalNodeAggrData GROUP BY finalKey ORDER BY finalKey";
+            + timeSelectExtra.toString()
+            + " FROM finalNodeAggrData GROUP BY finalKey"
+            + (timeGroupExprs.isEmpty() ? "" : ", " + String.join(", ", timeGroupExprs))
+            + " ORDER BY finalKey";
 
       jobContext.setParameters("COUNTER_MAP_QUERY", COUNTER_QUERY_MAP);
       jobContext.setParameters("FILTER_QUERY_FINAL", FILTER_QUERY_FINAL);
@@ -951,11 +1047,13 @@ public class OTFExtractConfiguration extends Processor {
       jobContext.setParameters("COUNTER_TIME_AGGR_QUERY", COUNTER_TIME_AGGR_QUERY);
       jobContext.setParameters("RAW_FILE_COUNTER_NODE_AGGR_QUERY", RAW_FILE_COUNTER_NODE_AGGR_QUERY);
 
-      logger.error("COUNTER_MAP_QUERY={}", COUNTER_QUERY_MAP);
-      logger.error("FILTER_QUERY_FINAL={}", FILTER_QUERY_FINAL);
-      logger.error("COUNTER_NODE_AGGR_QUERY={}", COUNTER_NODE_AGGR_QUERY);
-      logger.error("COUNTER_TIME_AGGR_QUERY={}", COUNTER_TIME_AGGR_QUERY);
-      logger.error("RAW_FILE_COUNTER_NODE_AGGR_QUERY={}", RAW_FILE_COUNTER_NODE_AGGR_QUERY);
+      if (IS_LOG_ENABLED) {
+         logger.info("COUNTER_MAP_QUERY={}", COUNTER_QUERY_MAP);
+         logger.info("FILTER_QUERY_FINAL={}", FILTER_QUERY_FINAL);
+         logger.info("COUNTER_NODE_AGGR_QUERY={}", COUNTER_NODE_AGGR_QUERY);
+         logger.info("COUNTER_TIME_AGGR_QUERY={}", COUNTER_TIME_AGGR_QUERY);
+         logger.info("RAW_FILE_COUNTER_NODE_AGGR_QUERY={}", RAW_FILE_COUNTER_NODE_AGGR_QUERY);
+      }
 
    }
 
@@ -1003,8 +1101,10 @@ public class OTFExtractConfiguration extends Processor {
    private static String getAggregationLevel(Map<String, String> reportWidgetDetailsMap,
          Map<String, String> nodeAndAggregationDetails, JobContext jobContext) {
 
-      logger.error("Report Widget Details Map: {}", reportWidgetDetailsMap);
-      logger.error("Node And Aggregation Details: {}", nodeAndAggregationDetails);
+      if (IS_LOG_ENABLED) {
+         logger.info("Report Widget Details Map: {}", reportWidgetDetailsMap);
+         logger.info("Node And Aggregation Details: {}", nodeAndAggregationDetails);
+      }
 
       String aggregationLevel = "H1";
 
@@ -1021,12 +1121,14 @@ public class OTFExtractConfiguration extends Processor {
       boolean isGeoL4MultiSelect = Boolean.parseBoolean(nodeAndAggregationDetails.get("IS_GEOGRAPHY_L4_MULTI_SELECT"));
 
       String isNodeMultiSelect = nodeAndAggregationDetails.get("IS_NODE_MULTI_SELECT");
-      logger.error("Is Node Multi Select: {}", isNodeMultiSelect);
+      if (IS_LOG_ENABLED) {
+         logger.info("Is Node Multi Select: {}", isNodeMultiSelect);
+      }
 
       if (isNodeMultiSelect.equals("true")) {
-         logger.error("CASE 0: CUSTOM NODE SELECTED!!");
-
-         // Added For Managed Objects (MO)
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 0: CUSTOM NODE SELECTED!!");
+         }
          if (node.contains("CLUBBED") && mo.contains("CLUBBED")) {
             aggregationLevel = "L0";
             jobContext.setParameters("CUSTOM_INDIA_LEVEL", "TRUE");
@@ -1043,187 +1145,248 @@ public class OTFExtractConfiguration extends Processor {
       if (geoL1.contains("CLUBBED") && geoL2.contains("CLUBBED") && geoL3.contains("CLUBBED")
             && geoL4.contains("CLUBBED") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 1: CLUBBED, CLUBBED, CLUBBED, CLUBBED, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 1: CLUBBED, CLUBBED, CLUBBED, CLUBBED, CLUBBED");
+         }
          aggregationLevel = "L0";
 
       } else if (geoL1.contains("CLUBBED") && geoL2.contains("CLUBBED") && geoL3.contains("CLUBBED")
             && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 2: CLUBBED, CLUBBED, CLUBBED, CLUBBED, INDIVIDUAL");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 2: CLUBBED, CLUBBED, CLUBBED, CLUBBED, INDIVIDUAL");
+         }
          aggregationLevel = "H1";
 
       } else if (geoL1.contains("INDIVIDUAL") && geoL2.contains("CLUBBED") && geoL3.contains("CLUBBED")
             && geoL4.contains("CLUBBED") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 3: INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 3: INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED, CLUBBED");
+         }
          aggregationLevel = "L1";
       } else if (geoL1.contains("INDIVIDUAL") && geoL2.contains("CLUBBED") && geoL3.contains("CLUBBED")
             && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 4: INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED, INDIVIDUAL");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 4: INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED, INDIVIDUAL");
+         }
          aggregationLevel = "H1";
       } else if (geoL1.contains("INDIVIDUAL") && geoL2.contains("INDIVIDUAL") && geoL3.contains("CLUBBED")
             && geoL4.contains("CLUBBED") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 5: INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 5: INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED");
+         }
          aggregationLevel = "L2";
       } else if (geoL1.contains("INDIVIDUAL") && geoL2.contains("INDIVIDUAL") && geoL3.contains("CLUBBED")
             && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 6: INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED, INDIVIDUAL");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 6: INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED, INDIVIDUAL");
+         }
          aggregationLevel = "H1";
       } else if (geoL1.contains("INDIVIDUAL") && geoL2.contains("INDIVIDUAL") && geoL3.contains("INDIVIDUAL")
             && geoL4.contains("CLUBBED") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 7: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 7: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED");
+         }
          aggregationLevel = "L3";
 
       } else if (geoL1.contains("INDIVIDUAL") && geoL2.contains("INDIVIDUAL") && geoL3.contains("INDIVIDUAL")
             && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 8: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED, INDIVIDUAL");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 8: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED, INDIVIDUAL");
+         }
          aggregationLevel = "H1";
 
       } else if (geoL1.contains("INDIVIDUAL") && geoL2.contains("INDIVIDUAL") && geoL3.contains("INDIVIDUAL")
             && geoL4.contains("INDIVIDUAL") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 9: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 9: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED");
+         }
          aggregationLevel = "L4";
 
       } else if (geoL1.contains("INDIVIDUAL") && geoL2.contains("INDIVIDUAL") && geoL3.contains("INDIVIDUAL")
             && geoL4.contains("INDIVIDUAL") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 10: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 10: INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL");
+         }
          aggregationLevel = "H1";
       } else if (isGeoL1MultiSelect && geoL2.contains("CLUBBED") && geoL3.contains("CLUBBED")
             && geoL4.contains("CLUBBED") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 11: MULTI SELECT, CLUBBED, CLUBBED, CLUBBED, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 11: MULTI SELECT, CLUBBED, CLUBBED, CLUBBED, CLUBBED");
+         }
          aggregationLevel = "L1";
 
       } else if (isGeoL1MultiSelect && geoL2.contains("CLUBBED") && geoL3.contains("CLUBBED")
             && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 12: MULTI SELECT, CLUBBED, CLUBBED, CLUBBED, INDIVIDUAL");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 12: MULTI SELECT, CLUBBED, CLUBBED, CLUBBED, INDIVIDUAL");
+         }
          aggregationLevel = "H1";
 
       } else if (isGeoL1MultiSelect && geoL2.contains("INDIVIDUAL") && geoL3.contains("CLUBBED")
             && geoL4.contains("CLUBBED") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 13: MULTI SELECT, INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 13: MULTI SELECT, INDIVIDUAL, CLUBBED, CLUBBED, CLUBBED");
+         }
          aggregationLevel = "L2";
 
       } else if (isGeoL1MultiSelect && geoL2.contains("INDIVIDUAL") && geoL3.contains("CLUBBED")
             && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 14: MULTI SELECT, INDIVIDUAL, CLUBBED, CLUBBED, INDIVIDUAL");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 14: MULTI SELECT, INDIVIDUAL, CLUBBED, CLUBBED, INDIVIDUAL");
+         }
          aggregationLevel = "H1";
 
       } else if (isGeoL1MultiSelect && geoL2.contains("INDIVIDUAL") && geoL3.contains("INDIVIDUAL")
             && geoL4.contains("CLUBBED") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 15: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 15: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED");
+         }
          aggregationLevel = "L3";
 
       } else if (isGeoL1MultiSelect && geoL2.contains("INDIVIDUAL") && geoL3.contains("INDIVIDUAL")
             && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 16: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 16: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED, CLUBBED");
+         }
          aggregationLevel = "H1";
 
       } else if (isGeoL1MultiSelect && geoL2.contains("INDIVIDUAL") && geoL3.contains("INDIVIDUAL")
             && geoL4.contains("INDIVIDUAL") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 17: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 17: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED");
+         }
          aggregationLevel = "L4";
 
       } else if (isGeoL1MultiSelect && geoL2.contains("INDIVIDUAL") && geoL3.contains("INDIVIDUAL")
             && geoL4.contains("INDIVIDUAL") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 18: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 18: MULTI SELECT, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL, CLUBBED");
+         }
          aggregationLevel = "H1";
 
       } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && geoL3.contains("CLUBBED")
             && geoL4.contains("CLUBBED") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 19: MULTI SELECT, MULTI SELECT, CLUBBED, CLUBBED, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 19: MULTI SELECT, MULTI SELECT, CLUBBED, CLUBBED, CLUBBED");
+         }
          aggregationLevel = "L2";
 
       } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && geoL3.contains("CLUBBED")
             && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 20: MULTI SELECT, MULTI SELECT, CLUBBED, CLUBBED, INDIVIDUAL");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 20: MULTI SELECT, MULTI SELECT, CLUBBED, CLUBBED, INDIVIDUAL");
+         }
          aggregationLevel = "H1";
 
       } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && geoL3.contains("INDIVIDUAL")
             && geoL4.contains("CLUBBED") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 21: MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 21: MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED, CLUBBED");
+         }
          aggregationLevel = "L3";
 
       } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && geoL3.contains("INDIVIDUAL")
             && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 22: MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED, INDIVIDUAL");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 22: MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED, INDIVIDUAL");
+         }
          aggregationLevel = "H1";
 
       } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && isGeoL3MultiSelect
             && geoL4.contains("CLUBBED") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 23: MULTI SELECT, MULTI SELECT, MULTI SELECT, CLUBBED, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 23: MULTI SELECT, MULTI SELECT, MULTI SELECT, CLUBBED, CLUBBED");
+         }
          aggregationLevel = "L3";
 
       } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && isGeoL3MultiSelect
             && geoL4.contains("CLUBBED") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 24: MULTI SELECT, MULTI SELECT, MULTI SELECT, CLUBBED, INDIVIDUAL");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 24: MULTI SELECT, MULTI SELECT, MULTI SELECT, CLUBBED, INDIVIDUAL");
+         }
          aggregationLevel = "H1";
 
       } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && isGeoL3MultiSelect
             && geoL4.contains("INDIVIDUAL") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 25: MULTI SELECT, MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 25: MULTI SELECT, MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED");
+         }
          aggregationLevel = "L4";
 
       } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && isGeoL3MultiSelect
             && geoL4.contains("INDIVIDUAL") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 26: MULTI SELECT, MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 26: MULTI SELECT, MULTI SELECT, MULTI SELECT, INDIVIDUAL, CLUBBED");
+         }
          aggregationLevel = "H1";
 
       } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && isGeoL3MultiSelect && isGeoL4MultiSelect
             && node.contains("CLUBBED")) {
 
-         logger.error("CASE 27: MULTI SELECT, MULTI SELECT, MULTI SELECT, MULTI SELECT, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 27: MULTI SELECT, MULTI SELECT, MULTI SELECT, MULTI SELECT, CLUBBED");
+         }
          aggregationLevel = "L4";
 
       } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && isGeoL3MultiSelect && isGeoL4MultiSelect
             && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 28: MULTI SELECT, MULTI SELECT, MULTI SELECT, MULTI SELECT, INDIVIDUAL");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 28: MULTI SELECT, MULTI SELECT, MULTI SELECT, MULTI SELECT, INDIVIDUAL");
+         }
          aggregationLevel = "H1";
 
       } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && geoL3.contains("INDIVIDUAL")
             && geoL4.contains("INDIVIDUAL") && node.contains("CLUBBED")) {
 
-         logger.error("CASE 29: MULTI SELECT, MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 29: MULTI SELECT, MULTI SELECT, INDIVIDUAL, INDIVIDUAL, CLUBBED");
+         }
          aggregationLevel = "L4";
 
       } else if (isGeoL1MultiSelect && isGeoL2MultiSelect && geoL3.contains("INDIVIDUAL")
             && geoL4.contains("INDIVIDUAL") && node.contains("INDIVIDUAL")) {
 
-         logger.error("CASE 30: MULTI SELECT, MULTI SELECT, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL");
+         if (IS_LOG_ENABLED) {
+            logger.info("CASE 30: MULTI SELECT, MULTI SELECT, INDIVIDUAL, INDIVIDUAL, INDIVIDUAL");
+         }
          aggregationLevel = "H1";
 
       } else {
 
-         logger.error("=========This Case In Not Implemented==========");
+         if (IS_LOG_ENABLED) {
+            logger.info("=========This Case In Not Implemented==========");
+         }
          aggregationLevel = "H1";
       }
 
-      // Added For Managed Objects (MO)
       String moCopy = nodeAndAggregationDetails.get("MO");
-      if (moCopy != null && !moCopy.isEmpty()) {
+      if (moCopy != null && !moCopy.isEmpty() && node.contains("INDIVIDUAL")) {
          if (moCopy.contains("INDIVIDUAL")) {
             aggregationLevel = "NAM";
          } else if (moCopy.contains("CLUBBED")) {
@@ -1244,7 +1407,9 @@ public class OTFExtractConfiguration extends Processor {
       };
 
       String frequency = jobContext.getParameter("FREQUENCY");
-      logger.error("Getting Time Key, With From Date={}, To Date={}, Frequency={}", fromDate, toDate, frequency);
+      if (IS_LOG_ENABLED) {
+         logger.info("Getting Time Key, With From Date={}, To Date={}, Frequency={}", fromDate, toDate, frequency);
+      }
 
       DateTimeFormatter keyFormat = null;
 
@@ -1293,10 +1458,9 @@ public class OTFExtractConfiguration extends Processor {
          try {
             return LocalDateTime.parse(dateStr, formatter);
          } catch (Exception e) {
-            // Try next format
          }
       }
-      throw new IllegalArgumentException("❌ Unable to parse date: " + dateStr);
+      throw new IllegalArgumentException("Unable to Parse Date: " + dateStr);
    }
 
    private static Map<String, Map<String, String>> getKpiFormulaMap(String kpiCodesCommaSeparated,
@@ -1304,7 +1468,9 @@ public class OTFExtractConfiguration extends Processor {
 
       Map<String, Map<String, String>> kpiFormulaFinalMap = new LinkedHashMap<>();
 
-      logger.error("Getting KPI Formula Map With KPI IDs={}", kpiCodesCommaSeparated);
+      if (IS_LOG_ENABLED) {
+         logger.info("Getting KPI Formula Map With KPI IDs={}", kpiCodesCommaSeparated);
+      }
       try {
 
          String kpiFormulaQuery = getKpiFormulaQuery(kpiCodesCommaSeparated, reportWidgetDetailsMap);
@@ -1362,7 +1528,9 @@ public class OTFExtractConfiguration extends Processor {
          Map<String, Map<String, String>> nodeTimeAggrMap)
          throws Exception {
 
-      logger.error("Get PM Counter Variable Aggr Query, With Frequency={}", frequency);
+      if (IS_LOG_ENABLED) {
+         logger.info("Get PM Counter Variable Aggr Query, With Frequency={}", frequency);
+      }
 
       StringBuilder NODE_AGGREGATION_QUERY_BUILDER = new StringBuilder();
       StringBuilder COUNTER_WITH_NODE_AGGR_BUILDER = new StringBuilder();
@@ -1398,8 +1566,10 @@ public class OTFExtractConfiguration extends Processor {
 
       String CATEGORY_LIST = jobContext.getParameter("CATEGORY_LIST");
 
-      logger.error("Category List={}", CATEGORY_LIST);
-      logger.error("Category Info Map={}", CATEGORY_INFO_MAP);
+      if (IS_LOG_ENABLED) {
+         logger.info("Category List={}", CATEGORY_LIST);
+         logger.info("Category Info Map={}", CATEGORY_INFO_MAP);
+      }
 
       if (upperFreq.equalsIgnoreCase("5 MIN") || upperFreq.equalsIgnoreCase("FIVEMIN")) {
          COUNTER_WITH_NODE_AGGR_BUILDER.append(
@@ -1425,7 +1595,11 @@ public class OTFExtractConfiguration extends Processor {
             String NODE_AGGREGATION = "";
             String TIME_AGGREGATION = "";
 
+            logger.info("Is PM Counter Variable ID PK={} Present in Node Time Aggr Map={}?", PM_COUNTER_VARIABLE_ID_PK,
+                  nodeTimeAggrMap.containsKey(PM_COUNTER_VARIABLE_ID_PK));
+
             if (nodeTimeAggrMap.containsKey(PM_COUNTER_VARIABLE_ID_PK)) {
+
                Map<String, String> nodeTimeAggrSubMap = nodeTimeAggrMap.get(PM_COUNTER_VARIABLE_ID_PK);
                NODE_AGGREGATION = nodeTimeAggrSubMap.get("NODE_AGGREGATION");
                TIME_AGGREGATION = nodeTimeAggrSubMap.get("TIME_AGGREGATION");
@@ -1434,8 +1608,10 @@ public class OTFExtractConfiguration extends Processor {
                TIME_AGGREGATION = EACH_CATEGORY_INFO_MAP.get("TIME_AGGREGATION");
             }
 
-            logger.error("📊 NODE_AGGREGATION: {}", NODE_AGGREGATION);
-            logger.error("📊 TIME_AGGREGATION: {}", TIME_AGGREGATION);
+            if (IS_LOG_ENABLED) {
+               logger.info("NODE_AGGREGATION: {}", NODE_AGGREGATION);
+               logger.info("TIME_AGGREGATION: {}", TIME_AGGREGATION);
+            }
 
             String counterKey = "C" + SEQUENCE_NO + "#" + PM_COUNTER_VARIABLE_ID_PK;
             String counterId = counterKey.split("#")[1];
@@ -1447,7 +1623,9 @@ public class OTFExtractConfiguration extends Processor {
                      .append("`, '").append(counterId).append("', `").append(counterKey).append("`, ");
             }
 
-            logger.error("Generated Map Query={}", mapQuery);
+            if (IS_LOG_ENABLED) {
+               logger.info("Generated Map Query={}", mapQuery);
+            }
 
             String date = timeKeysCommaSeparated;
 
@@ -1496,11 +1674,13 @@ public class OTFExtractConfiguration extends Processor {
          }
       }
 
-      logger.error("COUNTER_WITH_NODE_AGGR_BUILDER={}", COUNTER_WITH_NODE_AGGR_BUILDER);
-      logger.error("COUNTER_WITH_TIME_AGGR_BUILDER={}", COUNTER_WITH_TIME_AGGR_BUILDER);
-      logger.error("NODE_AGGREGATION_QUERY_BUILDER={}", NODE_AGGREGATION_QUERY_BUILDER);
-      logger.error("FILTER_QUERY_BUILDER={}", FILTER_QUERY_BUILDER);
-      logger.error("MAP_QUERY={}", mapQuery);
+      if (IS_LOG_ENABLED) {
+         logger.info("COUNTER_WITH_NODE_AGGR_BUILDER=>{}", COUNTER_WITH_NODE_AGGR_BUILDER);
+         logger.info("COUNTER_WITH_TIME_AGGR_BUILDER={}", COUNTER_WITH_TIME_AGGR_BUILDER);
+         logger.info("NODE_AGGREGATION_QUERY_BUILDER={}", NODE_AGGREGATION_QUERY_BUILDER);
+         logger.info("FILTER_QUERY_BUILDER={}", FILTER_QUERY_BUILDER);
+         logger.info("MAP_QUERY={}", mapQuery);
+      }
 
       String mapQueryStr = mapQuery.toString();
       int lastCommaIndex = mapQueryStr.lastIndexOf(",");
@@ -1525,17 +1705,164 @@ public class OTFExtractConfiguration extends Processor {
             ? FILTER_QUERY.trim().substring(0, FILTER_QUERY.trim().length() - 1)
             : FILTER_QUERY;
 
-      String COUNTER_NODE_AGGR_QUERY = "SELECT finalKey, FIRST_VALUE(metaData) AS metaData, " + NODE_AGGREGATION_QUERY
+      // NEW: Check for nemetaColumnsAggregation and selectedHeader='custom'
+      String selectedHeader = jobContext.getParameter("selectedHeader");
+      selectedHeader = selectedHeader == null ? "default" : selectedHeader;
+      String nemetaColumnsAggregation = jobContext.getParameter("NEMETA_COLUMNS_AGGREGATION");
+      nemetaColumnsAggregation = nemetaColumnsAggregation == null ? "false" : nemetaColumnsAggregation;
+      String nemetaGroupColumns = jobContext.getParameter("NEMETA_GROUP_COLUMNS");
+      nemetaGroupColumns = nemetaGroupColumns == null ? "" : nemetaGroupColumns.trim();
+
+      // LEGACY: Check for customAggregation (backward compatibility)
+      String customAggFlagNode = jobContext.getParameter("CUSTOM_AGGREGATION");
+      String groupCenterKeysNode = jobContext.getParameter("GROUP_CENTER_KEYS");
+      if (customAggFlagNode == null)
+         customAggFlagNode = "false";
+      if (groupCenterKeysNode == null)
+         groupCenterKeysNode = "";
+
+      StringBuilder nodeSelectExtra = new StringBuilder();
+      java.util.List<String> nodeGroupExprs = new java.util.ArrayList<>();
+
+      // NEW LOGIC: Use nemeta_groupColumns when selectedHeader='custom' and
+      // nemetaColumnsAggregation=true
+      boolean useNemetaForNode = selectedHeader.equalsIgnoreCase("custom")
+            && nemetaColumnsAggregation.equalsIgnoreCase("true")
+            && !nemetaGroupColumns.trim().isEmpty();
+
+      if (useNemetaForNode) {
+         // NEW: Use nemeta_groupColumns
+         for (String key : nemetaGroupColumns.split(",")) {
+            String k = key.trim();
+            if (k.isEmpty())
+               continue;
+            boolean looksLikeM = (k.length() > 1 && (k.charAt(0) == 'M' || k.charAt(0) == 'm'));
+            boolean digits = true;
+            for (int i = 1; i < k.length(); i++) {
+               if (!Character.isDigit(k.charAt(i))) {
+                  digits = false;
+                  break;
+               }
+            }
+            if (looksLikeM && digits) {
+               String expr = "element_at(metaData,'" + k + "')";
+               nodeSelectExtra.append(", ").append(expr).append(" AS ").append(k);
+               nodeGroupExprs.add(expr);
+            }
+         }
+      } else if (customAggFlagNode.equalsIgnoreCase("true") && !groupCenterKeysNode.trim().isEmpty()) {
+         // LEGACY: Use group_center (backward compatibility)
+         for (String key : groupCenterKeysNode.split(",")) {
+            String k = key.trim();
+            if (k.isEmpty())
+               continue;
+            boolean looksLikeM = (k.length() > 1 && (k.charAt(0) == 'M' || k.charAt(0) == 'm'));
+            boolean digits = true;
+            for (int i = 1; i < k.length(); i++) {
+               if (!Character.isDigit(k.charAt(i))) {
+                  digits = false;
+                  break;
+               }
+            }
+            if (looksLikeM && digits) {
+               String expr = "element_at(metaData,'" + k + "')";
+               nodeSelectExtra.append(", ").append(expr).append(" AS ").append(k);
+               nodeGroupExprs.add(expr);
+            }
+         }
+      }
+
+      String COUNTER_NODE_AGGR_QUERY = "SELECT finalKey, FIRST_VALUE(metaData) AS metaData, "
+            + NODE_AGGREGATION_QUERY
+            + nodeSelectExtra.toString()
             + " FROM FinalCounterData GROUP BY finalKey";
+
+      if (upperFreq.equalsIgnoreCase("PERHOUR") || upperFreq.equalsIgnoreCase("PERDAY")) {
+         COUNTER_NODE_AGGR_QUERY += ", quarterKey";
+      }
+
+      if (!nodeGroupExprs.isEmpty()) {
+         COUNTER_NODE_AGGR_QUERY += ", " + String.join(", ", nodeGroupExprs);
+      }
 
       String FILTER_QUERY_FINAL = FILTER_QUERY;
       String RAW_FILE_COUNTER_NODE_AGGR_QUERY = "";
 
-      RAW_FILE_COUNTER_NODE_AGGR_QUERY = COUNTER_WITH_NODE_AGGR
-            + " FROM JOINED_RESULT GROUP BY fiveMinuteKey, quarterKey, finalKey, dateKey, hourKey, NAM, categoryname";
+      if (IS_LOG_ENABLED) {
+         logger.info("Group By Key={}", upperFreq);
+      }
+
+      if (upperFreq.equalsIgnoreCase("PERHOUR")) {
+         RAW_FILE_COUNTER_NODE_AGGR_QUERY = COUNTER_WITH_NODE_AGGR
+               + " FROM JOINED_RESULT GROUP BY quarterKey, finalKey, dateKey, hourKey, NAM, categoryname";
+      } else if (upperFreq.equalsIgnoreCase("PERDAY")) {
+
+         RAW_FILE_COUNTER_NODE_AGGR_QUERY = COUNTER_WITH_NODE_AGGR
+               + " FROM JOINED_RESULT GROUP BY quarterKey, finalKey, dateKey, hourKey, NAM, categoryname";
+
+      } else {
+         RAW_FILE_COUNTER_NODE_AGGR_QUERY = COUNTER_WITH_NODE_AGGR
+               + " FROM JOINED_RESULT GROUP BY fiveMinuteKey, quarterKey, finalKey, dateKey, hourKey, NAM, categoryname";
+      }
+
+      String customAggFlag2 = jobContext.getParameter("CUSTOM_AGGREGATION");
+      String groupCenterKeys2 = jobContext.getParameter("GROUP_CENTER_KEYS");
+      if (customAggFlag2 == null)
+         customAggFlag2 = "false";
+      if (groupCenterKeys2 == null)
+         groupCenterKeys2 = "";
+
+      StringBuilder timeSelectExtra2 = new StringBuilder();
+      java.util.List<String> timeGroupExprs2 = new java.util.ArrayList<>();
+      if (customAggFlag2.equalsIgnoreCase("true") && !groupCenterKeys2.trim().isEmpty()) {
+         for (String key : groupCenterKeys2.split(",")) {
+            String k = key.trim();
+            if (k.isEmpty())
+               continue;
+            boolean looksLikeM = (k.length() > 1 && (k.charAt(0) == 'M' || k.charAt(0) == 'm'));
+            boolean digits = true;
+            for (int i = 1; i < k.length(); i++) {
+               if (!Character.isDigit(k.charAt(i))) {
+                  digits = false;
+                  break;
+               }
+            }
+            if (looksLikeM && digits) {
+               String expr = "element_at(metaData,'" + k + "')";
+               timeSelectExtra2.append(", ").append(expr).append(" AS ").append(k);
+               timeGroupExprs2.add(expr);
+            }
+         }
+      }
+
+      String whereNemetaTime = "";
+      if (useNemetaForNode && !timeGroupExprs2.isEmpty()) {
+         String rawFilters = jobContext.getParameter("NEMETA_GROUP_FILTERS");
+         if (rawFilters != null && !rawFilters.trim().isEmpty()) {
+            List<String> conds = new ArrayList<>();
+            for (String part : rawFilters.split(",")) {
+               if (part == null || part.trim().isEmpty()) continue;
+               int eqIdx = part.indexOf('=');
+               if (eqIdx > 0) {
+                  String k = part.substring(0, eqIdx).trim();
+                  String v = part.substring(eqIdx + 1).trim();
+                  v = v.replace("'", "''");
+                  conds.add("element_at(metaData,'" + k + "') = '" + v + "'");
+               }
+            }
+            if (!conds.isEmpty()) {
+               whereNemetaTime = " WHERE " + String.join(" AND ", conds);
+            }
+         }
+      }
 
       String COUNTER_TIME_AGGR_QUERY = "SELECT finalKey, FIRST_VALUE(metaData) AS metaData, " + COUNTER_WITH_TIME_AGGR
-            + " FROM finalNodeAggrData GROUP BY finalKey ORDER BY finalKey";
+            + timeSelectExtra2.toString()
+            + " FROM finalNodeAggrData"
+            + whereNemetaTime
+            + " GROUP BY finalKey"
+            + (timeGroupExprs2.isEmpty() ? "" : ", " + String.join(", ", timeGroupExprs2))
+            + " ORDER BY finalKey";
 
       jobContext.setParameters("COUNTER_MAP_QUERY", COUNTER_QUERY_MAP);
       jobContext.setParameters("FILTER_QUERY_FINAL", FILTER_QUERY_FINAL);
@@ -1543,11 +1870,13 @@ public class OTFExtractConfiguration extends Processor {
       jobContext.setParameters("COUNTER_TIME_AGGR_QUERY", COUNTER_TIME_AGGR_QUERY);
       jobContext.setParameters("RAW_FILE_COUNTER_NODE_AGGR_QUERY", RAW_FILE_COUNTER_NODE_AGGR_QUERY);
 
-      logger.error("COUNTER_MAP_QUERY={}", COUNTER_QUERY_MAP);
-      logger.error("FILTER_QUERY_FINAL={}", FILTER_QUERY_FINAL);
-      logger.error("COUNTER_NODE_AGGR_QUERY={}", COUNTER_NODE_AGGR_QUERY);
-      logger.error("COUNTER_TIME_AGGR_QUERY={}", COUNTER_TIME_AGGR_QUERY);
-      logger.error("RAW_FILE_COUNTER_NODE_AGGR_QUERY={}", RAW_FILE_COUNTER_NODE_AGGR_QUERY);
+      if (IS_LOG_ENABLED) {
+         logger.info("COUNTER_MAP_QUERY={}", COUNTER_QUERY_MAP);
+         logger.info("FILTER_QUERY_FINAL={}", FILTER_QUERY_FINAL);
+         logger.info("COUNTER_NODE_AGGR_QUERY={}", COUNTER_NODE_AGGR_QUERY);
+         logger.info("COUNTER_TIME_AGGR_QUERY={}", COUNTER_TIME_AGGR_QUERY);
+         logger.info("RAW_FILE_COUNTER_NODE_AGGR_QUERY={}", RAW_FILE_COUNTER_NODE_AGGR_QUERY);
+      }
    }
 
    private static Map<String, List<Map<String, String>>> getCatgoryInfoMap(
@@ -1617,7 +1946,9 @@ public class OTFExtractConfiguration extends Processor {
 
       String counterInfoMapQuery = getCounterInfoMapQuery(jobContext, reportWidgetDetailsMap, commaSeparatedKpiCodes);
 
-      logger.error("Counter Info Map Query: {}", counterInfoMapQuery);
+      if (IS_LOG_ENABLED) {
+         logger.info("Counter Info Map Query: {}", counterInfoMapQuery);
+      }
 
       ResultSet resultSet = getResultSet(counterInfoMapQuery, jobContext);
 
@@ -1789,7 +2120,7 @@ public class OTFExtractConfiguration extends Processor {
          }
 
       } catch (Exception e) {
-         System.out.println("Error in Extracting KPI List, Message: " + e.getMessage() + ", Error: " + e);
+         logger.error("Error in Extracting KPI List, Message={}, Error={}", e.getMessage(), e);
       }
 
    }
@@ -1817,6 +2148,70 @@ public class OTFExtractConfiguration extends Processor {
          String selectedHeader = jsonObject.getString("selectedHeader");
          jobContext.setParameters("selectedHeader", selectedHeader);
 
+         // Extract customAggregation and group_center for dynamic grouping (LEGACY -
+         // keep for backward compatibility)
+         String customAggregation = jsonObject.optString("customAggregation", "false");
+         jobContext.setParameters("CUSTOM_AGGREGATION", customAggregation);
+
+         JSONArray groupCenterArray = jsonObject.optJSONArray("group_center");
+         if (groupCenterArray != null) {
+            List<String> groupCenters = new ArrayList<>();
+            for (int i = 0; i < groupCenterArray.length(); i++) {
+               try {
+                  String key = groupCenterArray.getString(i);
+                  if (key != null && !key.trim().isEmpty()) {
+                     groupCenters.add(key.trim());
+                  }
+               } catch (Exception e) {
+               }
+            }
+            String groupCenterKeys = String.join(",", groupCenters);
+            jobContext.setParameters("GROUP_CENTER_KEYS", groupCenterKeys);
+         } else {
+            jobContext.setParameters("GROUP_CENTER_KEYS", "");
+         }
+
+         // Extract NEW nemetaColumnsAggregation and nemeta_groupColumns for NE_META
+         // ORC-based grouping
+         String nemetaColumnsAggregation = jsonObject.optString("nemetaColumnsAggregation", "false");
+         jobContext.setParameters("NEMETA_COLUMNS_AGGREGATION", nemetaColumnsAggregation);
+
+         JSONArray nemetaGroupColumnsArray = jsonObject.optJSONArray("nemeta_groupColumns");
+         if (nemetaGroupColumnsArray != null) {
+            List<String> nemetaGroupColumns = new ArrayList<>();
+            List<String> nemetaGroupFilters = new ArrayList<>();
+            for (int i = 0; i < nemetaGroupColumnsArray.length(); i++) {
+               try {
+                  String raw = nemetaGroupColumnsArray.getString(i);
+                  if (raw == null || raw.trim().isEmpty()) continue;
+                  String item = raw.trim();
+                  int eqIdx = item.indexOf('=');
+                  if (eqIdx > 0) {
+                     String k = item.substring(0, eqIdx).trim();
+                     String v = item.substring(eqIdx + 1).trim();
+                     if (v.startsWith("'") && v.endsWith("'") && v.length() >= 2) {
+                        v = v.substring(1, v.length() - 1);
+                     }
+                     if (!k.isEmpty()) {
+                        nemetaGroupColumns.add(k);
+                        // store as k=v with single quotes escaped later where needed
+                        nemetaGroupFilters.add(k + "=" + v);
+                     }
+                  } else {
+                     nemetaGroupColumns.add(item);
+                  }
+               } catch (Exception e) {
+               }
+            }
+            String nemetaGroupColumnsKeys = String.join(",", nemetaGroupColumns);
+            jobContext.setParameters("NEMETA_GROUP_COLUMNS", nemetaGroupColumnsKeys);
+            String nemetaGroupFiltersStr = String.join(",", nemetaGroupFilters);
+            jobContext.setParameters("NEMETA_GROUP_FILTERS", nemetaGroupFiltersStr);
+         } else {
+            jobContext.setParameters("NEMETA_GROUP_COLUMNS", "");
+            jobContext.setParameters("NEMETA_GROUP_FILTERS", "");
+         }
+
          extraParameters.put("META_COLUMNS", metaColumns);
          extraParameters.put("REPORT_FORMAT_TYPE", reportFormatType);
          extraParameters.put("TO_DATE", toDate);
@@ -1827,6 +2222,8 @@ public class OTFExtractConfiguration extends Processor {
          extraParameters.put("FREQUENCY", frequency);
          extraParameters.put("SELECTED_HEADER", selectedHeader);
          extraParameters.put("UTC_OFFSET_IN_MINUTE", utcOffsetInMinute);
+         extraParameters.put("CUSTOM_AGGREGATION", customAggregation);
+         extraParameters.put("GROUP_CENTER_KEYS", jobContext.getParameter("GROUP_CENTER_KEYS"));
 
          jobContext.setParameters("FROM_DATE", fromDate);
          jobContext.setParameters("TO_DATE", toDate);
@@ -1843,7 +2240,9 @@ public class OTFExtractConfiguration extends Processor {
 
             List<Long> specificDateList = new ArrayList<>();
 
-            logger.error("Specific Date Found, Processing Specific Date List!");
+            if (IS_LOG_ENABLED) {
+               logger.info("Specific Date Found, Processing Specific Date List!");
+            }
 
             for (int i = 0; i < specificDate.length(); i++) {
                specificDateList.add(specificDate.getLong(i));
@@ -1853,16 +2252,20 @@ public class OTFExtractConfiguration extends Processor {
                   .map(String::valueOf)
                   .collect(Collectors.joining(","));
 
-            logger.error("Formatted Date List: {}", dateList);
+            if (IS_LOG_ENABLED) {
+               logger.info("Formatted Date List: {}", dateList);
+            }
 
             extraParameters.put("DATE_LIST", dateList);
 
          } else {
-            logger.error("No Specific Date Found, Using Default Date Range!");
+            if (IS_LOG_ENABLED) {
+               logger.info("No Specific Date Found, Using Default Date Range!");
+            }
          }
 
       } catch (Exception e) {
-         logger.error("Error in Getting CQL Parameters, Message: {}, Error: {}", e.getMessage(), e);
+         logger.error("Error in Getting CQL Parameters, Message={}, Error={}", e.getMessage(), e);
 
       }
       return extraParameters;
@@ -1873,7 +2276,9 @@ public class OTFExtractConfiguration extends Processor {
 
       String isSpecificDate = extraParametersMap.get("IS_SPECIFIC_DATE");
       if (isSpecificDate != null && isSpecificDate.equals("true")) {
-         logger.error("Specific Date Found, Need to Generate Trino ORC File Paths [Not Implemented Yet]!");
+         if (IS_LOG_ENABLED) {
+            logger.info("Specific Date Found, Need to Generate Trino ORC File Paths [Not Implemented Yet]!");
+         }
          return "";
       }
 
@@ -1886,10 +2291,12 @@ public class OTFExtractConfiguration extends Processor {
       String toDate = extraParametersMap.get("TO_DATE");
       String frequency = extraParametersMap.get("FREQUENCY");
 
-      logger.error("Trino ORC Base Path: {}", trinoOrcBasePath);
-      logger.error("From Date: {}", fromDate);
-      logger.error("To Date: {}", toDate);
-      logger.error("Frequency: {}", frequency);
+      if (IS_LOG_ENABLED) {
+         logger.info("Trino ORC Base Path: {}", trinoOrcBasePath);
+         logger.info("From Date: {}", fromDate);
+         logger.info("To Date: {}", toDate);
+         logger.info("Frequency: {}", frequency);
+      }
 
       String domain = reportWidgetDetails.getOrDefault("DOMAIN", "NA");
       String vendor = reportWidgetDetails.getOrDefault("VENDOR", "NA");
@@ -1934,7 +2341,9 @@ public class OTFExtractConfiguration extends Processor {
          }
       }
 
-      logger.error("Trino ORC File Path List Size: {}", pathList.size());
+      if (IS_LOG_ENABLED) {
+         logger.info("Trino ORC File Path List Size: {}", pathList.size());
+      }
       return String.join(",", pathList);
    }
 
@@ -2018,7 +2427,9 @@ public class OTFExtractConfiguration extends Processor {
          }
 
          if (numericIds.isEmpty()) {
-            logger.error("[ReadConfigUDF] No Numeric IDs Found for Geography Level: {}", level);
+            if (IS_LOG_ENABLED) {
+               logger.info("[ReadConfigUDF] No Numeric IDs Found for Geography Level: {}", level);
+            }
             return namesArray;
          }
 
@@ -2028,7 +2439,9 @@ public class OTFExtractConfiguration extends Processor {
 
          String query = "SELECT ID, UPPER(GEO_NAME) AS GEO_NAME FROM " + tableName + " WHERE ID IN (" + quotedIds
                + ")";
-         logger.error("[ReadConfigUDF] Geography Query For Level {}: {}", level, query);
+         if (IS_LOG_ENABLED) {
+            logger.info("[ReadConfigUDF] Geography Query For Level {}: {}", level, query);
+         }
 
          ResultSet resultSet = getResultSet(query, jobContext);
          if (resultSet != null) {
@@ -2044,7 +2457,9 @@ public class OTFExtractConfiguration extends Processor {
                if (name != null) {
                   namesArray.put(name);
                } else {
-                  logger.error("[ReadConfigUDF] No Name Found for Geography ID: {} In Level: {}", id, level);
+                  if (IS_LOG_ENABLED) {
+                     logger.info("[ReadConfigUDF] No Name Found for Geography ID: {} In Level: {}", id, level);
+                  }
                   namesArray.put(id);
                }
             }
@@ -2056,8 +2471,10 @@ public class OTFExtractConfiguration extends Processor {
                level, e.getMessage(), e);
       }
 
-      logger.error("[ReadConfigUDF] Converted {} IDs to {} Names for Geography Level: {}",
-            ids.length(), namesArray.length(), level);
+      if (IS_LOG_ENABLED) {
+         logger.info("[ReadConfigUDF] Converted {} IDs to {} Names for Geography Level: {}",
+               ids.length(), namesArray.length(), level);
+      }
       return namesArray;
    }
 
@@ -2092,8 +2509,10 @@ public class OTFExtractConfiguration extends Processor {
             geoL4JSONArray = getGeographyNamesByIds(geoL4JSONArray, "L4", jobContext);
          }
 
-         logger.error("Geo & Node Details => GeoL1: {}, GeoL2: {}, GeoL3: {}, GeoL4: {}, Node: {}, Mo: {}",
-               geoL1JSONArray, geoL2JSONArray, geoL3JSONArray, geoL4JSONArray, nodeArray, moArray);
+         if (IS_LOG_ENABLED) {
+            logger.info("Geo & Node Details => GeoL1: {}, GeoL2: {}, GeoL3: {}, GeoL4: {}, Node: {}, Mo: {}",
+                  geoL1JSONArray, geoL2JSONArray, geoL3JSONArray, geoL4JSONArray, nodeArray, moArray);
+         }
 
          List<String> geoL1List = getStringListFromArray(geoL1JSONArray);
          List<String> geoL2List = getStringListFromArray(geoL2JSONArray);
@@ -2109,9 +2528,11 @@ public class OTFExtractConfiguration extends Processor {
          nodeList = nodeList != null && !nodeList.isEmpty() ? nodeList : new ArrayList<String>();
          moList = moList != null && !moList.isEmpty() ? moList : new ArrayList<String>();
 
-         logger.error(
-               "Geo & Node Lists => GeoL1: {}, GeoL2: {}, GeoL3: {}, GeoL4: {}, Node: {}, Mo: {}",
-               geoL1List, geoL2List, geoL3List, geoL4List, nodeList, moList);
+         if (IS_LOG_ENABLED) {
+            logger.info(
+                  "Geo & Node Lists => GeoL1: {}, GeoL2: {}, GeoL3: {}, GeoL4: {}, Node: {}, Mo: {}",
+                  geoL1List, geoL2List, geoL3List, geoL4List, nodeList, moList);
+         }
 
          String geoL1 = (geoL1List != null && !geoL1List.isEmpty() && geoL1List.get(0) != null)
                ? geoL1List.get(0).toUpperCase()
@@ -2143,15 +2564,19 @@ public class OTFExtractConfiguration extends Processor {
                      ? moList.get(0).toUpperCase()
                      : "";
 
-         logger.error(
-               "Geo & Node Info => GeoL1: {}, GeoL2: {}, GeoL3: {}, GeoL4: {}, Node: {}, Mo: {}",
-               geoL1, geoL2, geoL3, geoL4, node, mo);
+         if (IS_LOG_ENABLED) {
+            logger.info(
+                  "Geo & Node Info => GeoL1: {}, GeoL2: {}, GeoL3: {}, GeoL4: {}, Node: {}, Mo: {}",
+                  geoL1, geoL2, geoL3, geoL4, node, mo);
+         }
 
          String netype = jsonObject.getString("netype");
          netype = netype != null && !netype.isEmpty() ? netype.toUpperCase() : "";
 
-         logger.error("Provided Node & Aggragtaion Details: geoL1={}, geoL2={}, geoL3={}, geoL4={}, node={}",
-               geoL1, geoL2, geoL3, geoL4, node);
+         if (IS_LOG_ENABLED) {
+            logger.info("Provided Node & Aggragtaion Details: geoL1={}, geoL2={}, geoL3={}, geoL4={}, node={}",
+                  geoL1, geoL2, geoL3, geoL4, node);
+         }
 
          String polygonName = jsonObject.optString("polygonName", "");
 
@@ -2187,9 +2612,11 @@ public class OTFExtractConfiguration extends Processor {
          String isGeoL4MultiSelect = !geoL4.contains("CLUBBED") && !geoL4.contains("INDIVIDUAL")
                && !geoL4.contains("CUSTOM") && !geoL4.isEmpty() ? "true" : "false";
 
-         logger.error(
-               "Geo Multi-Select Flags => GeoL1: {}, GeoL2: {}, GeoL3: {}, GeoL4: {}",
-               isGeoL1MultiSelect, isGeoL2MultiSelect, isGeoL3MultiSelect, isGeoL4MultiSelect);
+         if (IS_LOG_ENABLED) {
+            logger.info(
+                  "Geo Multi-Select Flags => GeoL1: {}, GeoL2: {}, GeoL3: {}, GeoL4: {}",
+                  isGeoL1MultiSelect, isGeoL2MultiSelect, isGeoL3MultiSelect, isGeoL4MultiSelect);
+         }
 
          nodeAndAggregationDetails.put("IS_GEOGRAPHY_L1_MULTI_SELECT", isGeoL1MultiSelect);
          nodeAndAggregationDetails.put("IS_GEOGRAPHY_L2_MULTI_SELECT", isGeoL2MultiSelect);
@@ -2206,7 +2633,9 @@ public class OTFExtractConfiguration extends Processor {
             String formattedNodes = nodeNameList.stream()
                   .map(name -> "'" + name + "'")
                   .collect(Collectors.joining(","));
-            logger.error("Node Info List: {}", formattedNodes);
+            if (IS_LOG_ENABLED) {
+               logger.info("Node Info List: {}", formattedNodes);
+            }
 
             nodeAndAggregationDetails.put("NODE_NAME_LIST", formattedNodes);
 

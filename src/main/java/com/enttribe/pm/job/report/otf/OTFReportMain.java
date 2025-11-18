@@ -43,7 +43,7 @@ public class OTFReportMain {
                          * READ OTF REPORT CONFIGURATION
                          */
 
-                        String READ_OTF_REPORT_CONFIGURATION_QUERY = "SELECT REPORT_WIDGET_ID_PK, GENERATED_REPORT_ID, UPPER(REPORT_MEASURE) AS REPORT_MEASURE, UPPER(TRIM(REPORT_NAME)) AS REPORT_NAME, UPPER(DOMAIN) AS DOMAIN, UPPER(VENDOR) AS VENDOR, UPPER(TECHNOLOGY) AS TECHNOLOGY, UPPER(FREQUENCY) AS FREQUENCY, UPPER(NODE) AS NODE, CONFIGURATION FROM REPORT_WIDGET WHERE REPORT_MEASURE = 'OTF Report_ONDEMAND' AND DELETED = 0 AND GENERATED_TYPE = 'ON_DEMAND' AND REPORT_WIDGET_ID_PK = 16197";
+                        String READ_OTF_REPORT_CONFIGURATION_QUERY = "SELECT REPORT_WIDGET_ID_PK, GENERATED_REPORT_ID, UPPER(REPORT_MEASURE) AS REPORT_MEASURE, UPPER(TRIM(REPORT_NAME)) AS REPORT_NAME, UPPER(DOMAIN) AS DOMAIN, UPPER(VENDOR) AS VENDOR, UPPER(TECHNOLOGY) AS TECHNOLOGY, UPPER(FREQUENCY) AS FREQUENCY, UPPER(NODE) AS NODE, CONFIGURATION FROM REPORT_WIDGET WHERE REPORT_MEASURE = 'OTF Report_ONDEMAND' AND DELETED = 0 AND GENERATED_TYPE = 'ON_DEMAND' AND REPORT_WIDGET_ID_PK = 15996";
 
                         logger.info("📊 READ OTF REPORT CONFIGURATION QUERY: {}", READ_OTF_REPORT_CONFIGURATION_QUERY);
 
@@ -108,11 +108,9 @@ public class OTFReportMain {
                         logger.info("📊 FILTER_LEVEL: {}", FILTER_LEVEL);
                         logger.info("📊 FILTER_QUERY_FINAL: {}", FILTER_QUERY_FINAL);
 
-                        String QUERY_FOR_FINAL_COUNTER_DATA = "SELECT CONCAT(metaData['"
-                                        + FILTER_LEVEL
-                                        + "'], COALESCE('',''),'##',finalKey) AS finalKey, "
-                                        + FILTER_QUERY_FINAL
-                                        + ", metaData FROM rawFileNodeAggrData";
+                        String QUERY_FOR_FINAL_COUNTER_DATA = "SELECT CONCAT(metaData['" + FILTER_LEVEL
+                                        + "'], COALESCE('',''),'##',finalKey) AS finalKey, quarterKey, hourKey, dateKey, "
+                                        + FILTER_QUERY_FINAL + ", metaData FROM rawFileNodeAggrData";
 
                         dataFrame = new ExecuteSparkSQLD1Custom(dataFrame, 7, "QUERY FOR FINAL COUNTER DATA",
                                         QUERY_FOR_FINAL_COUNTER_DATA, "FinalCounterData", null)
@@ -170,16 +168,18 @@ public class OTFReportMain {
                         KPIEvaluator kpiEvaluator = new KPIEvaluator();
                         kpiEvaluator.jobContext = jobContext;
                         jobContext.sqlctx().udf().register(kpiEvaluator.getName(), kpiEvaluator,
-                        kpiEvaluator.getReturnType());
+                                        kpiEvaluator.getReturnType());
 
                         String frequency = jobContext.getParameter("FREQUENCY");
 
-                        String KPI_EVALUATOR_QUERY = "SELECT formula_calculated_data.record_data.* FROM (SELECT KPIEvaluator(finalKey, rawcounters ,metaData, '" + frequency + "') AS record_data FROM finalAggrDataKPI WHERE finalKey IS NOT NULL AND finalKey != '-' AND finalKey != \"\") AS formula_calculated_data";
+                        String KPI_EVALUATOR_QUERY = "SELECT formula_calculated_data.record_data.* FROM (SELECT KPIEvaluator(finalKey, rawcounters ,metaData, '"
+                                        + frequency
+                                        + "') AS record_data FROM finalAggrDataKPI WHERE finalKey IS NOT NULL AND finalKey != '-' AND finalKey != \"\") AS formula_calculated_data";
 
                         dataFrame = new ExecuteSparkSQLD1Custom(dataFrame, 11, "KPI EVALUATOR",
-                        KPI_EVALUATOR_QUERY,
-                        "kpiEvaluatedData", null)
-                        .executeAndGetResultDataframe(jobContext);
+                                        KPI_EVALUATOR_QUERY,
+                                        "kpiEvaluatedData", null)
+                                        .executeAndGetResultDataframe(jobContext);
 
                         dataFrame.show(5, false);
                         logger.info("🚀 KPI EVALUATOR Executed Successfully! ✅");
@@ -208,7 +208,8 @@ public class OTFReportMain {
                          * UPDATE REPORT DETAILS
                          */
 
-                        UpdateReportDetails updateReportDetails = new UpdateReportDetails(dataFrame,14,"UPDATE REPORT DETAILS");
+                        UpdateReportDetails updateReportDetails = new UpdateReportDetails(dataFrame, 14,
+                                        "UPDATE REPORT DETAILS");
                         updateReportDetails.dataFrame = dataFrame;
                         updateReportDetails.executeAndGetResultDataframe(jobContext);
 
@@ -228,7 +229,7 @@ public class OTFReportMain {
         private static JobContext setParametersToJobContext(JobContext jobContext) {
 
                 jobContext.setParameters("SPARK_PM_JDBC_URL",
-                                "jdbc:mysql://localhost:3306/PERFORMANCE_A_LAB?autoReconnect=true&allowPublicKeyRetrieval=true&useSSL=false");
+                                "jdbc:mysql://localhost:3306/RLTL_OCT?autoReconnect=true&allowPublicKeyRetrieval=true&useSSL=false");
                 jobContext.setParameters("SPARK_PM_JDBC_DRIVER", "org.mariadb.jdbc.Driver");
                 jobContext.setParameters("SPARK_PM_JDBC_USERNAME", "root");
                 jobContext.setParameters("SPARK_PM_JDBC_PASSWORD", "root");

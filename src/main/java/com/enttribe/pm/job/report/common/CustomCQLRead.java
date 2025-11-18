@@ -29,6 +29,7 @@ import org.slf4j.LoggerFactory;
 import com.enttribe.sparkrunner.context.JobContext;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import static org.apache.spark.sql.functions.*;
 
 public class CustomCQLRead extends Processor {
 
@@ -229,10 +230,6 @@ public class CustomCQLRead extends Processor {
         long seconds = (durationMillis % 60000) / 1000;
 
         if (cqlResultDataFrame != null && !cqlResultDataFrame.isEmpty()) {
-            cqlResultDataFrame.createOrReplaceTempView("CQL_RESULT_DATAFRAME");
-            cqlResultDataFrame = jobContext.sqlctx().sql("SELECT * FROM CQL_RESULT_DATAFRAME ORDER BY timestamp ASC");
-            // cqlResultDataFrame.show(5);
-            logger.info("+++[CustomCQLRead] Final DataFrame Displayed Successfully!");
         } else {
             StructType schema = new StructType()
                     .add("domain", DataTypes.StringType, true)
@@ -252,28 +249,14 @@ public class CustomCQLRead extends Processor {
 
         }
 
-        // long recordCount = cqlResultDataFrame.count();
-
-        // int numPartitions;
-        // if (recordCount <= 100000) {
-        // numPartitions = 50;
-        // } else if (recordCount <= 500000) {
-        // numPartitions = 100;
-        // } else if (recordCount <= 2000000) {
-        // numPartitions = 200;
-        // } else {
-        // numPartitions = 400;
-        // }
-        int before = cqlResultDataFrame.rdd().getNumPartitions();
-        logger.info("Number of Partitions Before Repartition: {}", before);
-
-        cqlResultDataFrame = cqlResultDataFrame.repartition(100);
-
-        int after = cqlResultDataFrame.rdd().getNumPartitions();
-        logger.info("Number of Partitions After Repartition: {}", after);
+        String utcOffsetInMinute = extraParametersMap.getOrDefault("utcOffsetInMinute", "0");
+        int offsetMinutes = Integer.parseInt(utcOffsetInMinute);
+        Dataset<Row> adjustedDF = cqlResultDataFrame.withColumn(
+                "timestamp",
+                expr("timestamp + INTERVAL " + offsetMinutes + " MINUTE"));
 
         logger.info("[CustomCQLRead] Execution Completed! Time Taken: {} Minutes | {} Seconds", minutes, seconds);
-        return cqlResultDataFrame;
+        return adjustedDF;
     }
 
     private static String[] getCellArrayFromNodeArray(String[] nodeArray, JobContext jobContext) {
@@ -1255,10 +1238,19 @@ public class CustomCQLRead extends Processor {
                     .collect(Collectors.joining(", "));
 
             String formattedTimestampList = Arrays.stream(timestampList.split(","))
-                    .map(timestamp -> String.format("TIMESTAMP '%s'",
-                            LocalDateTime.ofEpochSecond(Long.parseLong(timestamp.trim()), 0, ZoneOffset.UTC)
-                                    .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .mapToLong(Long::parseLong)
+                    .sorted()
+                    .mapToObj(epochMillis -> {
+                        long epochSeconds = epochMillis / 1000L;
+                        return String.format("TIMESTAMP '%s'",
+                                LocalDateTime.ofEpochSecond(epochSeconds, 0, ZoneOffset.UTC)
+                                        .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+                    })
                     .collect(Collectors.joining(", "));
+
+            logger.info("[CustomCQLRead] Formatted Timestamp List: {}", formattedTimestampList);
 
             cqlFilter = String.format(
                     "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s' AND timestamp IN (%s) AND date IN (%s) AND nodename IN (%s)",
@@ -1397,10 +1389,19 @@ public class CustomCQLRead extends Processor {
                         .collect(Collectors.joining(", "));
 
                 String formattedTimestampList = Arrays.stream(timestampList.split(","))
-                        .map(timestamp -> String.format("TIMESTAMP '%s'",
-                                LocalDateTime.ofEpochSecond(Long.parseLong(timestamp.trim()), 0, ZoneOffset.UTC)
-                                        .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .mapToLong(Long::parseLong)
+                        .sorted()
+                        .mapToObj(epochMillis -> {
+                            long epochSeconds = epochMillis / 1000L;
+                            return String.format("TIMESTAMP '%s'",
+                                    LocalDateTime.ofEpochSecond(epochSeconds, 0, ZoneOffset.UTC)
+                                            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+                        })
                         .collect(Collectors.joining(", "));
+
+                logger.info("[CustomCQLRead] Formatted Timestamp List: {}", formattedTimestampList);
 
                 cqlFilter = String.format(
                         "domain = '%s' AND vendor = '%s' AND technology = '%s' AND datalevel = '%s' AND timestamp IN (%s) AND date IN (%s)",
@@ -1579,7 +1580,7 @@ public class CustomCQLRead extends Processor {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSX");
         DateTimeFormatter outputFormatter = DateTimeFormatter.ofPattern("yyyyMMdd");
         if (reportWidgetDetails.get("frequency").equalsIgnoreCase("PERDAY")) {
-            outputFormatter = DateTimeFormatter.ofPattern("yyMMdd");
+            outputFormatter = DateTimeFormatter.ofPattern("yyyyMMdd");
         }
 
         ZonedDateTime start = ZonedDateTime.parse(startTime, formatter);
@@ -1611,11 +1612,13 @@ public class CustomCQLRead extends Processor {
         String[] epochList = inputEpochList.split(",");
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMdd");
         if (reportWidgetDetails.get("frequency").equalsIgnoreCase("PERDAY")) {
-            formatter = DateTimeFormatter.ofPattern("yyMMdd");
+            formatter = DateTimeFormatter.ofPattern("yyyyMMdd");
         }
 
         for (String epoch : epochList) {
-            String formattedDate = LocalDateTime.ofEpochSecond(Long.parseLong(epoch.trim()), 0, ZoneOffset.UTC)
+            long epochMillis = Long.parseLong(epoch.trim());
+            long epochSeconds = epochMillis / 1000L; // input is in milliseconds
+            String formattedDate = LocalDateTime.ofEpochSecond(epochSeconds, 0, ZoneOffset.UTC)
                     .format(formatter);
             uniqueDates.add(formattedDate);
         }

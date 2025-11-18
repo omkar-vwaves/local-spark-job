@@ -3,7 +3,6 @@ package com.enttribe.pm.job.alert.otf;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -16,7 +15,6 @@ import org.apache.spark.sql.Row;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
-import static org.apache.spark.sql.functions.*;
 
 import com.enttribe.sparkrunner.context.JobContext;
 import com.enttribe.sparkrunner.processors.Processor;
@@ -50,11 +48,9 @@ public class OTFAlertReadMinioFiles extends Processor {
 
         logger.info("Trino ORC Path: {}, Trino NE Path: {}", trinoOrcPath, trinoNePath);
 
-        String START_INDEX = jobContext.getParameter("START_INDEX");
-
-        String counterInfoMap = jobContext.getParameter("COUNTER_INFO_MAP" + START_INDEX);
-        String categoryInfoMap = jobContext.getParameter("CATEGORY_INFO_MAP" + START_INDEX);
-        String categoryList = jobContext.getParameter("CATEGORY_LIST" + START_INDEX);
+        String counterInfoMap = jobContext.getParameter("COUNTER_INFO_MAP");
+        String categoryInfoMap = jobContext.getParameter("CATEGORY_INFO_MAP");
+        String categoryList = jobContext.getParameter("CATEGORY_LIST");
 
         @SuppressWarnings("unchecked")
         Map<String, List<Map<String, String>>> categoryInfoMapObject = new ObjectMapper().readValue(categoryInfoMap,
@@ -115,10 +111,9 @@ public class OTFAlertReadMinioFiles extends Processor {
             trinoNeDF = trinoNeDF.withColumn("L0", org.apache.spark.sql.functions.lit("Custom"));
             trinoNeDF.createOrReplaceTempView("TRINO_NE_DF");
 
-            // Filter Trino NE Dataframe
-
-            String FILTER_LEVEL = jobContext.getParameter("FILTER_LEVEL" + START_INDEX);
-            logger.info("OTFAlertReadMinioFiles FILTER LEVEL: {}", FILTER_LEVEL);
+            // Filter Trino NE DF
+            String START_INDEX = jobContext.getParameter("START_INDEX");
+            logger.info("OTFAlertReadMinioFiles START INDEX: {}", START_INDEX);
 
             String nodeAndAggregationDetailsMapJson = jobContext
                     .getParameter("NODE_AND_AGGREGATION_DETAILS_MAP" + START_INDEX);
@@ -267,15 +262,11 @@ public class OTFAlertReadMinioFiles extends Processor {
         logger.info("Trino NE DataFrame Filtered Successfully!");
 
         String[] trinoNeColumns = trinoNeDF.columns();
-        String FILTER_LEVEL = jobContext.getParameter("FILTER_LEVEL" + START_INDEX);
-        logger.info("OTFAlertReadMinioFiles FILTER LEVEL: {}", FILTER_LEVEL);
-
-        boolean excludeNAM = FILTER_LEVEL != null && FILTER_LEVEL.equalsIgnoreCase("NAM");
-        String finalQueryMap = generateMetaDataMapQuery(trinoNeColumns, excludeNAM);
+        String finalQueryMap = generateMetaDataMapQuery(trinoNeColumns);
 
         try {
             Dataset<Row> joinedResult = getFinalResult(jobContext, categoryInfoMapObject,
-                    categoryList, counterInfoMapObject, finalQueryMap, FILTER_LEVEL);
+                    categoryList, counterInfoMapObject, finalQueryMap);
 
             joinedResult.createOrReplaceTempView("JOINED_RESULT");
             joinedResult.show();
@@ -294,13 +285,7 @@ public class OTFAlertReadMinioFiles extends Processor {
 
     private static Dataset<Row> getFinalResult(JobContext jobContext,
             Map<String, List<Map<String, String>>> categoryInfoMapObject, String categoryList,
-            Map<String, Map<String, String>> counterInfoMapObject, String finalQueryMap, String FILTER_LEVEL) {
-
-        // Set Spark config to handle duplicate map keys (LAST_WIN policy) early
-        if (FILTER_LEVEL != null && FILTER_LEVEL.equalsIgnoreCase("NAM")) {
-            jobContext.sqlctx().sparkSession().conf().set("spark.sql.mapKeyDedupPolicy", "LAST_WIN");
-            logger.info("Set spark.sql.mapKeyDedupPolicy to LAST_WIN for NAM filter level");
-        }
+            Map<String, Map<String, String>> counterInfoMapObject, String finalQueryMap) {
 
         String counterIds = counterInfoMapObject.entrySet().stream()
                 .map(e -> "C" + e.getValue().get("SEQUENCE_NO") + "#"
@@ -419,49 +404,12 @@ public class OTFAlertReadMinioFiles extends Processor {
             logger.info("Raw Counter List: {}", rawCounterList);
             logger.info("Final Query Map: {}", finalQueryMap);
 
-            // String joinQuery = "SELECT c.fiveminutekey, c.quarterKey, c.dateKey,
-            // c.hourKey, c.finalKey, c.interfacename AS pmemsid, c.categoryname, m.NAM, "
-            // + rawCounterList + finalQueryMap
-            // + " FROM UPDATED_TRINO_ORC_DF c JOIN TRINO_NE_DF m ON UPPER(c.interfacename)
-            // =UPPER(m.pmemsid) AND c.dateKey= m.date";
-
-            String joinQuery = "";
-            if (FILTER_LEVEL != null && FILTER_LEVEL.equalsIgnoreCase("NAM")) {
-
-                logger.info("Making Inventory Optional!");
-
-                // Add NAM and NEID to metaData map using map_concat since both were excluded
-                // from finalQueryMap
-                // Both NAM and NEID will use c.interfacename value
-                String metaDataWithNAMAndNEID = "map_concat(" + finalQueryMap.replace(" AS metaData", "")
-                        + ", map('NAM', c.interfacename, 'NEID', c.interfacename)) AS metaData";
-
-                joinQuery = "SELECT c.fiveminutekey, c.quarterKey, c.dateKey, c.hourKey, c.finalKey, c.interfacename AS pmemsid, c.categoryname, c.interfacename AS NAM, "
-                        + rawCounterList + metaDataWithNAMAndNEID
-                        + " FROM UPDATED_TRINO_ORC_DF c JOIN TRINO_NE_DF m ON UPPER(c.pmemsid) =UPPER(m.pmemsid) AND c.dateKey= m.date AND c.interfacename IS NOT NULL AND TRIM(c.interfacename) <> '' AND LOWER(TRIM(c.interfacename)) <> 'null' AND c.interfacename != c.pmemsid ";
-
-                // Testing
-                // joinQuery += " AND c.interfacename IN
-                // ('172.31.31.1_et-1/0/5','172.31.31.1_et-4/0/5','172.31.46.71_xe-0/3/0','172.31.46.71_xe-0/3/1')";
-
-            } else {
-                joinQuery = "SELECT c.fiveminutekey, c.quarterKey, c.dateKey, c.hourKey, c.finalKey, c.interfacename AS pmemsid, c.categoryname, m.NAM, "
-                        + rawCounterList + finalQueryMap
-                        + " FROM UPDATED_TRINO_ORC_DF c JOIN TRINO_NE_DF m ON UPPER(c.pmemsid) =UPPER(m.pmemsid) AND c.dateKey= m.date";
-            }
+            String joinQuery = "SELECT c.fiveminutekey, c.quarterKey, c.dateKey, c.hourKey, c.finalKey, c.interfacename AS pmemsid, c.categoryname, m.NAM, "
+                    + rawCounterList + finalQueryMap
+                    + " FROM UPDATED_TRINO_ORC_DF c JOIN TRINO_NE_DF m ON UPPER(c.interfacename) =UPPER(m.pmemsid) AND c.dateKey= m.date";
 
             logger.info("Join Query: {}", joinQuery);
             Dataset<Row> joinedResult = jobContext.sqlctx().sql(joinQuery);
-
-            joinedResult.show(100, false);
-            logger.info("+++++++++++++++++++++[TRINO ORC WITH NE_META (JOINED RESULT)]+++++++++++++++++++++");
-
-            Map<String, String> jobContextMap = new HashMap<>();
-            jobContextMap = jobContext.getParameters();
-            for (Map.Entry<String, String> entry : jobContextMap.entrySet()) {
-                logger.info("Job Context Map: {}", entry.getKey() + "=" + entry.getValue());
-            }
-            logger.info("+++++++++++++++++++++[JOB CONTEXT MAP]+++++++++++++++++++++");
             return joinedResult;
 
         } catch (Exception e) {
@@ -471,13 +419,10 @@ public class OTFAlertReadMinioFiles extends Processor {
         }
     }
 
-    private static String generateMetaDataMapQuery(String[] trinoNeColumns, boolean excludeNAM) {
+    private static String generateMetaDataMapQuery(String[] trinoNeColumns) {
         StringBuilder finalMapQuery = new StringBuilder("map(");
         for (String col : trinoNeColumns) {
-            // Exclude pmemsid, and exclude NAM and NEID when excludeNAM is true
-            boolean excludeColumn = "pmemsid".equalsIgnoreCase(col)
-                    || (excludeNAM && ("NAM".equalsIgnoreCase(col) || "NEID".equalsIgnoreCase(col)));
-            if (!excludeColumn) {
+            if (!"pmemsid".equalsIgnoreCase(col)) {
                 finalMapQuery.append("'")
                         .append(col)
                         .append("' ,m.`")
@@ -636,47 +581,17 @@ public class OTFAlertReadMinioFiles extends Processor {
             logger.info("Path Validated Successfully!");
 
             logger.info("Reading Files From Path: {}", filePath);
-            String[] paths = filePath.split(",");
-            Dataset<Row> accumulated = null;
-            for (String p : paths) {
-                String path = p.trim();
-                if (path.isEmpty()) {
-                    continue;
-                }
-                try {
-                    Dataset<Row> df = jobContext.sqlctx().read()
-                            .format("orc")
-                            .option("mergeSchema", "true")
-                            .option("basePath", basePath)
-                            .load(path);
-                    if (df != null && !df.isEmpty()) {
-                        accumulated = (accumulated == null) ? df : accumulated.unionByName(df, true);
-                        logger.info("Loaded path: {}", path);
-                    } else {
-                        logger.info("Path loaded but empty: {}", path);
-                    }
-                } catch (Exception inner) {
-                    String msgInner = inner.getMessage() != null ? inner.getMessage() : "";
-                    if (msgInner.contains("File does not exist") || msgInner.contains("Path does not exist")
-                            || msgInner.contains("NoSuchFile") || msgInner.contains("404")
-                            || msgInner.contains("Not Found")) {
-                        logger.info("Skipping missing path: {}", path);
-                        continue;
-                    }
-                    logger.error("Failed reading path: {} Error: {}", path, msgInner);
-                    throw inner;
-                }
-            }
 
-            if (accumulated == null) {
-                logger.info("No readable paths found among: {}", Arrays.toString(paths));
-                return null;
-            }
+            Dataset<Row> orcDataFrame = jobContext.sqlctx().read()
+                    .format("orc")
+                    .option("mergeSchema", "true")
+                    .option("basePath", basePath)
+                    .load(filePath);
 
-            accumulated = accumulated.cache();
+            orcDataFrame = orcDataFrame.cache();
             logger.info("DataFrame Cached Successfully!");
 
-            return accumulated;
+            return orcDataFrame;
 
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "";
@@ -688,6 +603,7 @@ public class OTFAlertReadMinioFiles extends Processor {
                 throw new RuntimeException("Connection Failed To MinIO At: " + filePath, e);
             } else {
                 logger.error("Critical Error In ReadFiles: {}", msg);
+                // throw new RuntimeException("Failed To Read Files", e);
                 return null;
             }
         }
@@ -765,66 +681,15 @@ public class OTFAlertReadMinioFiles extends Processor {
             case "QUARTERLY":
                 frequencyPartition = "QUARTERLY";
                 break;
-            case "PERWEEK":
-                frequencyPartition = "DAILY";
-                break;
-            case "PERMONTH":
-                frequencyPartition = "DAILY";
-                break;
             default:
                 frequencyPartition = "QUARTERLY";
                 break;
         }
 
-        String trinoOrcPath;
-        if ("DAILY".equalsIgnoreCase(frequency) || "PERDAY".equalsIgnoreCase(frequency)) {
-            // Build 96 explicit quarter paths for the day using BASE_TRINO_ORC_PATH_DATE
-            String commonPrefix = baseTrinoOrcPath + "frequency=" + frequencyPartition + "/domain=" + domain
-                    + "/vendor=" + vendor + "/emstype=" + emsType + "/technology=" + technology
-                    + "/date=" + baseTrinoPathDate + "/time=";
-            String suffix = "/" + "ptime=*/" + "categoryname=*";
-            List<String> parts = new ArrayList<>();
-            String[] quarters = new String[] { "00", "15", "30", "45" };
-            for (int h = 0; h < 24; h++) {
-                String hh = (h < 10 ? "0" : "") + h;
-                for (String mm : quarters) {
-                    parts.add(commonPrefix + hh + mm + suffix);
-                }
-            }
-            trinoOrcPath = String.join(",", parts);
-        } else if ("HOURLY".equalsIgnoreCase(frequency) || "PERHOUR".equalsIgnoreCase(frequency)) {
-            String hourPrefix = baseTrinoPathTime != null && baseTrinoPathTime.length() >= 2
-                    ? baseTrinoPathTime.substring(0, 2)
-                    : baseTrinoPathTime;
-            if (hourPrefix != null && hourPrefix.length() == 2) {
-                String commonPrefix = baseTrinoOrcPath + "frequency=" + frequencyPartition + "/domain=" + domain
-                        + "/vendor=" + vendor + "/emstype=" + emsType + "/technology=" + technology
-                        + "/date=" + baseTrinoPathDate + "/time=";
-                String suffix = "/" + "ptime=*/" + "categoryname=*";
-                String p1 = commonPrefix + hourPrefix + "00" + suffix;
-                String p2 = commonPrefix + hourPrefix + "15" + suffix;
-                String p3 = commonPrefix + hourPrefix + "30" + suffix;
-                String p4 = commonPrefix + hourPrefix + "45" + suffix;
-                trinoOrcPath = String.join(",", Arrays.asList(p1, p2, p3, p4));
-            } else {
-                trinoOrcPath = baseTrinoOrcPath + "frequency=" + frequencyPartition + "/domain=" + domain
-                        + "/vendor=" + vendor + "/emstype=" + emsType + "/technology=" + technology + "/date="
-                        + baseTrinoPathDate + "/time=" + baseTrinoPathTime + "/" + "ptime=*/" + "categoryname=*";
-            }
-        } else if ("PERWEEK".equalsIgnoreCase(frequency) || "PERMONTH".equalsIgnoreCase(frequency)) {
-            String commonPrefix = baseTrinoOrcPath + "frequency=" + frequencyPartition + "/domain=" + domain
-                    + "/vendor=" + vendor + "/emstype=" + emsType + "/technology=" + technology
-                    + "/date=" + baseTrinoPathDate + "/time=";
-            String suffix = "/" + "ptime=*/" + "categoryname=*";
-            String p1 = commonPrefix + "WEEK=" + baseTrinoPathDate + suffix;
-            String p2 = commonPrefix + "MONTH=" + baseTrinoPathDate + suffix;
-            trinoOrcPath = String.join(",", Arrays.asList(p1, p2));
-        } else {
-            trinoOrcPath = baseTrinoOrcPath + "frequency=" + frequencyPartition + "/domain=" + domain + "/vendor="
-                    + vendor + "/emstype=" + emsType
-                    + "/technology=" + technology + "/date=" + baseTrinoPathDate + "/time=" + baseTrinoPathTime
-                    + "/" + "ptime=*/" + "categoryname=*";
-        }
+        String trinoOrcPath = baseTrinoOrcPath + "frequency=" + frequencyPartition + "/domain=" + domain + "/vendor="
+                + vendor + "/emstype=" + emsType
+                + "/technology=" + technology + "/date=" + baseTrinoPathDate + "/time=" + baseTrinoPathTime + "/"
+                + "ptime=*/" + "categoryname=*";
 
         logger.info("Trino ORC Path: {}", trinoOrcPath);
 

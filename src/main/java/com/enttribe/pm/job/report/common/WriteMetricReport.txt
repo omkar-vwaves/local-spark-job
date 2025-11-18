@@ -25,6 +25,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.FillPatternType;
@@ -36,21 +37,15 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SaveMode;
+import org.apache.spark.storage.StorageLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.spark.api.java.*;
-import org.apache.spark.sql.functions;
-
 import java.util.*;
 import java.util.Arrays;
-
 import org.apache.commons.io.FileUtils;
 
 import java.io.*;
-import java.nio.file.*;
-
-import static org.apache.spark.sql.functions.*;
 import org.apache.poi.xssf.usermodel.XSSFRow;
 
 import org.apache.poi.ss.usermodel.*;
@@ -60,33 +55,44 @@ import org.apache.poi.xssf.usermodel.*;
 public class WriteMetricReport extends Processor {
 
     private static final Logger logger = LoggerFactory.getLogger(WriteMetricReport.class);
+    private static final int MAX_ROWS_PER_SHEET = 50000;
+    private static final int BATCH_SIZE_FOR_LOGGING = 50000;
+    private static final int MEMORY_CHECK_INTERVAL = 100000;
     private static String SPARK_MINIO_ENDPOINT_URL = "SPARK_MINIO_ENDPOINT_URL";
     private static String SPARK_MINIO_ACCESS_KEY = "SPARK_MINIO_ACCESS_KEY";
     private static String SPARK_MINIO_SECRET_KEY = "SPARK_MINIO_SECRET_KEY";
     private static String SPARK_MINIO_BUCKET_NAME_PM = "SPARK_MINIO_BUCKET_NAME_PM";
+    private final AtomicLong totalProcessingTime = new AtomicLong(0);
+    private final AtomicLong peakMemoryUsage = new AtomicLong(0);
 
     public WriteMetricReport() {
         super();
-        logger.info("WriteMetricReport No Argument Constructor Called!");
     }
 
     public WriteMetricReport(Dataset<Row> dataframe, Integer id, String processorName) {
         super(id, processorName);
         this.dataFrame = dataframe;
-        logger.info("WriteMetricReport Constructor Called with Input DataFrame With ID: {} and Processor Name: {}", id,
-                processorName);
+        if (dataframe != null) {
+            long rowCount = dataframe.count();
+            if (rowCount > 100000) {
+                logger.info("Large DataFrame Detected ({} rows), Applying MEMORY_AND_DISK_SER Storage Level", rowCount);
+                this.dataFrame = dataframe.persist(StorageLevel.MEMORY_AND_DISK_SER());
+            }
+        }
     }
 
     public WriteMetricReport(Integer id, String processorName) {
         super(id, processorName);
-        logger.info("WriteMetricReport Constructor Called with ID: {} and Processor Name: {}", id, processorName);
     }
 
     @Override
     public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) throws Exception {
-        logger.info("[WriteMetricReport] Execution Started!");
+        long executionStartTime = System.currentTimeMillis();
+        initializePerformanceMonitoring();
 
-        long startTime = System.currentTimeMillis();
+        logger.info("=== WriteMetricReport Execution Started ===");
+        logger.info("Timestamp: {}", new java.util.Date());
+        logMemoryUsage("Initial Memory State");
 
         Map<String, String> jobContextMap = jobContext.getParameters();
 
@@ -127,40 +133,51 @@ public class WriteMetricReport extends Processor {
 
         String reportWidgetIdPk = reportWidgetDetailsMap.get("reportWidgetIdPk");
         jobContext.setParameters("REPORT_WIDGET_ID_PK", reportWidgetIdPk);
-        logger.info("REPORT_WIDGET_ID_PK '{}' Set to Job Context Successfully! ✅", reportWidgetIdPk);
+        logger.info("REPORT_WIDGET_ID_PK '{}' Set to Job Context Successfully!", reportWidgetIdPk);
 
         String generatedReportId = reportWidgetDetailsMap.get("generatedReportId");
         jobContext.setParameters("GENERATED_REPORT_ID", generatedReportId);
-        logger.info("GENERATED_REPORT_ID '{}' Set to Job Context Successfully! ✅", generatedReportId);
+        logger.info("GENERATED_REPORT_ID '{}' Set to Job Context Successfully!", generatedReportId);
 
         String reportFileName = getReportFileName(jobContextMap);
-        logger.info("Report File Name: {}", reportFileName);
+        logger.info("Generated Report File Name: {}", reportFileName);
 
         Dataset<Row> expectedDF = this.dataFrame;
 
         String reportFormatType = extraParametersMap.get("reportFormatType");
 
         if (reportFormatType == null) {
-            throw new Exception(
-                    "REPORT_FORMAT_TYPE is NULL. Please Ensure Report Format Type is Properly Set.");
+            reportFormatType = "csv";
         }
 
         logger.info("Report Format Type: {}", reportFormatType);
 
         if (reportFormatType.equalsIgnoreCase("csv")) {
+            long csvStartTime = System.currentTimeMillis();
             processCSVReport(expectedDF, extraParametersMap, jobContext, reportFileName);
+            recordStepTime("CSV Report Processing", csvStartTime);
         } else if (reportFormatType.equalsIgnoreCase("excel")) {
+            long excelStartTime = System.currentTimeMillis();
             processExcelReport(expectedDF, extraParametersMap, jobContext, reportFileName);
+            recordStepTime("Excel Report Processing", excelStartTime);
         } else {
-            throw new Exception("REPORT_FORMAT_TYPE is Invalid. Please Ensure Input Report Format is Properly Set.");
+            long csvStartTime = System.currentTimeMillis();
+            processCSVReport(expectedDF, extraParametersMap, jobContext, reportFileName);
+            recordStepTime("CSV Report Processing", csvStartTime);
         }
 
         long endTime = System.currentTimeMillis();
-        long durationMillis = endTime - startTime;
+        long durationMillis = endTime - executionStartTime;
         long minutes = durationMillis / 60000;
         long seconds = (durationMillis % 60000) / 1000;
 
-        logger.info("[WriteMetricReport] Execution Completed! Time Taken: {} Minutes | {} Seconds", minutes, seconds);
+        logMemoryUsage("Final Memory State");
+        logPerformanceSummary(executionStartTime, endTime, totalProcessingTime.get());
+
+        logger.info("=== WriteMetricReport Execution Completed ===");
+        logger.info("Total Execution Time: {} Minutes | {} Seconds", minutes, seconds);
+        logger.info("Total Processing Time: {} ms", totalProcessingTime.get());
+        logger.info("Peak Memory Usage: {} MB", peakMemoryUsage.get() / (1024 * 1024));
 
         return this.dataFrame;
     }
@@ -175,23 +192,33 @@ public class WriteMetricReport extends Processor {
         String minioRegion = "us-east-1";
 
         String pushedDate = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        String tmpMinioDirPath = "protected/PM/FlowReport/tmp/" + UUID.randomUUID(); // Spark will write here
+        String tmpMinioDirPath = "protected/PM/FlowReport/tmp/" + UUID.randomUUID(); // Spark Will Write Here
         String finalMinioPath = "protected/PM/FlowReport/" + pushedDate + "/" + reportFileName;
 
         String reportWidgetFilePath = reportFileName;
         jobContext.setParameters("REPORT_WIDGET_FILE_PATH", reportWidgetFilePath);
-        logger.info("REPORT_WIDGET_FILE_PATH '{}' Set to Job Context Successfully! ✅", reportWidgetFilePath);
+        logger.info("REPORT_WIDGET_FILE_PATH '{}' Set to Job Context Successfully!", reportWidgetFilePath);
 
         String generatedReportFilePath = "/" + finalMinioPath;
         jobContext.setParameters("GENERATED_REPORT_FILE_PATH", generatedReportFilePath);
-        logger.info("GENERATED_REPORT_FILE_PATH '{}' Set to Job Context Successfully! ✅", generatedReportFilePath);
+        logger.info("GENERATED_REPORT_FILE_PATH '{}' Set to Job Context Successfully!", generatedReportFilePath);
 
         AmazonS3 s3client = null;
 
         try {
+            long stepStartTime = System.currentTimeMillis();
+
             logger.info("Step 1: Writing CSV to MinIO Temporary Path: {}", tmpMinioDirPath);
-            expectedDF.coalesce(1)
-                    .write()
+            logger.info("DataFrame Partitions: {}, Estimated Rows: {}",
+                    expectedDF.rdd().getNumPartitions(), expectedDF.count());
+
+            Dataset<Row> optimizedDF = expectedDF;
+            if (expectedDF.rdd().getNumPartitions() > 10) {
+                logger.info("Optimizing Partition Count For Large Dataset");
+                optimizedDF = expectedDF.coalesce(1);
+            }
+
+            optimizedDF.write()
                     .option("header", "true")
                     .option("delimiter", ",")
                     .option("quote", "\"")
@@ -200,7 +227,10 @@ public class WriteMetricReport extends Processor {
                     .mode(SaveMode.Overwrite)
                     .csv("s3a://" + bucketName + "/" + tmpMinioDirPath);
 
-            logger.info("📁 CSV File Written Successfully to MinIO Temporary Path");
+            long csvWriteTime = System.currentTimeMillis() - stepStartTime;
+            logger.info("CSV Writing Completed In {} ms", csvWriteTime);
+
+            logger.info("CSV File Written Successfully to MinIO Temporary Path");
 
             logger.info("Step 2: Creating MinIO S3 Client");
 
@@ -217,7 +247,7 @@ public class WriteMetricReport extends Processor {
                     .withCredentials(new AWSStaticCredentialsProvider(credentials))
                     .build();
 
-            logger.info("📁 MinIO S3 Client Created Successfully");
+            logger.info("MinIO S3 Client Created Successfully");
 
             logger.info("Step 3: Listing Files Under MinIO Temporary Path");
             ListObjectsV2Result result = s3client.listObjectsV2(bucketName, tmpMinioDirPath + "/");
@@ -227,15 +257,15 @@ public class WriteMetricReport extends Processor {
                     .findFirst()
                     .orElseThrow(() -> new FileNotFoundException("No part CSV file found in: " + tmpMinioDirPath));
 
-            logger.info("📁 Found Spark Part File in MinIO: {}", targetFile.getKey());
+            logger.info("Found Spark Part File in MinIO: {}", targetFile.getKey());
 
             String fileSize = String.valueOf(targetFile.getSize());
             jobContext.setParameters("FILE_SIZE", fileSize);
-            logger.info("FILE_SIZE '{}' Set to Job Context Successfully! ✅", fileSize);
+            logger.info("FILE_SIZE '{}' Set to Job Context Successfully!", fileSize);
 
             logger.info("Step 4: Copying to Final MinIO Path: {}", finalMinioPath);
             s3client.copyObject(bucketName, targetFile.getKey(), bucketName, finalMinioPath);
-            logger.info("📁 CSV File Copied Successfully to Final Path");
+            logger.info("CSV File Copied Successfully to Final Path");
 
             if (!s3client.doesObjectExist(bucketName, finalMinioPath)) {
                 throw new RuntimeException("Failed to Verify Final File Exists: " + finalMinioPath);
@@ -245,13 +275,13 @@ public class WriteMetricReport extends Processor {
             for (S3ObjectSummary obj : result.getObjectSummaries()) {
                 s3client.deleteObject(bucketName, obj.getKey());
             }
-            logger.info("🧹 Temporary MinIO Objects Deleted Successfully");
+            logger.info("Temporary MinIO Objects Deleted Successfully");
 
-            logger.info("CSV Report Uploaded Successfully! ✅");
+            logger.info("CSV Report Uploaded Successfully!");
             logger.info("Final file location: {}/{}", bucketName, finalMinioPath);
 
         } catch (Exception e) {
-            logger.error("❌ Error in Processing CSV Report, Message: {}, Error: {}", e.getMessage(), e);
+            logger.error("Error in Processing CSV Report, Message: {}, Error: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to Process CSV Report", e);
         } finally {
             if (s3client != null) {
@@ -309,7 +339,6 @@ public class WriteMetricReport extends Processor {
     private static void processExcelReport(Dataset<Row> expectedDF, Map<String, String> extraParametersMap,
             JobContext jobContext, String reportFileName) {
 
-        // Get RAG Configuration from Job Context
         String ragConfigurationJson = jobContext.getParameters().get("RAG_CONFIGURATION");
         Map<String, Map<String, String>> ragConfigurationMap = new HashMap<>();
         try {
@@ -359,11 +388,11 @@ public class WriteMetricReport extends Processor {
 
         String reportWidgetFilePath = reportFileName;
         jobContext.setParameters("REPORT_WIDGET_FILE_PATH", reportWidgetFilePath);
-        logger.info("REPORT_WIDGET_FILE_PATH '{}' Set to Job Context Successfully! ✅", reportWidgetFilePath);
+        logger.info("REPORT_WIDGET_FILE_PATH '{}' Set to Job Context Successfully!", reportWidgetFilePath);
 
         String generatedReportFilePath = "/" + finalMinioPath;
         jobContext.setParameters("GENERATED_REPORT_FILE_PATH", generatedReportFilePath);
-        logger.info("GENERATED_REPORT_FILE_PATH '{}' Set to Job Context Successfully! ✅", generatedReportFilePath);
+        logger.info("GENERATED_REPORT_FILE_PATH '{}' Set to Job Context Successfully!", generatedReportFilePath);
 
         InputStream inputStream = null;
         AmazonS3 s3client = null;
@@ -375,10 +404,13 @@ public class WriteMetricReport extends Processor {
                 if (!tmpDir.mkdirs()) {
                     throw new RuntimeException("Failed to create temporary directory: " + tmpDirPath);
                 }
-                logger.info("📁 Temporary Directory Created Successfully");
+                logger.info("Temporary Directory Created Successfully");
             }
 
             logger.info("Step 2: Converting DataFrame to Excel");
+            // logger.info("DataFrame Partitions: {}, Estimated Rows: {}",
+            //         expectedDF.rdd().getNumPartitions(), expectedDF.count());
+
             String excelFilePath = tmpDirPath + "/" + reportFileName;
             File excelFile = new File(excelFilePath);
 
@@ -410,34 +442,18 @@ public class WriteMetricReport extends Processor {
                 dataStyle.setLeftBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
                 dataStyle.setRightBorderColor(IndexedColors.GREY_25_PERCENT.getIndex());
 
-                // Create Style Cache for RAG Colors - REUSE STYLES
                 Map<String, CellStyle> ragStyleCache = new HashMap<>();
                 Font whiteFont = workbook.createFont();
                 whiteFont.setColor(IndexedColors.WHITE.getIndex());
-
-                // Create Grouped Header Style With Grey Background and White Text
                 CellStyle groupedHeaderStyle = getGroupedHeaderStyle(workbook);
-
-                // Create white font for group headers
                 Font groupHeaderFont = getGroupHeaderFont(workbook);
                 groupedHeaderStyle.setFont(groupHeaderFont);
-
-                // Create Empty Group Header Style With White Background
                 CellStyle emptyGroupHeaderStyle = getEmptyGroupHeaderStyle(workbook);
 
-                // CellStyle alternateRowStyle = workbook.createCellStyle();
-                // alternateRowStyle.cloneStyleFrom(dataStyle);
-                // alternateRowStyle.setFillForegroundColor(IndexedColors.GREY_25_PERCENT.getIndex());
-                // alternateRowStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
-
-                // Create KPI Group Header Row (Row 0) and Regular Header Row (Row 1)
-                // Only If Group Map Is Present And Not Empty
                 XSSFRow groupHeaderRow = null;
                 XSSFRow headerRow;
                 int dataStartRowIdx;
                 String[] columns = expectedDF.columns();
-
-                // Map KPI Code to Column Index for RAG Configuration
                 Map<String, Integer> kpiCodeToIndexMap = new HashMap<>();
                 for (int i = 0; i < columns.length; i++) {
                     String colName = columns[i];
@@ -454,7 +470,6 @@ public class WriteMetricReport extends Processor {
                     }
                 }
 
-                // Declare variables for group mapping that will be used across sheets
                 Map<Integer, String> columnToGroupMap = new HashMap<>();
                 Map<String, List<Integer>> groupToColumnsMap = new HashMap<>();
 
@@ -465,153 +480,142 @@ public class WriteMetricReport extends Processor {
                     dataStartRowIdx = 2;
                 } else {
                     logger.info("No KPI Group Map Provided, Skipping Grouped Headers!");
-                    // Only Create Regular Header At Row 0
                     headerRow = sheet.createRow(0);
                     dataStartRowIdx = 1;
                 }
 
-                                    // Create Grouped headers with proper cell merging
-                    if (groupHeaderRow != null) {
-                        logger.info("Processing KPI Group Headers: {}", kpiGroupMap);
-                        
-                        logger.info("Available Columns In DataFrame: {}", Arrays.toString(columns));
-                        
-                        // Map DataFrame columns to their groups
-                        for (Map.Entry<String, List<String>> groupEntry : kpiGroupMap.entrySet()) {
-                            String groupName = groupEntry.getKey();
-                            List<String> groupColumns = groupEntry.getValue();
-                            logger.info("Processing Group: {} With Columns: {}", groupName, groupColumns);
-                            
-                            for (String groupColumn : groupColumns) {
-                                boolean found = false;
-                                for (int i = 0; i < columns.length; i++) {
-                                    if (columns[i].equals(groupColumn)) {
-                                        columnToGroupMap.put(i, groupName);
-                                        logger.info("Mapped Column {} (Index {}) To Group {}", groupColumn, i, groupName);
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                                if (!found) {
-                                    logger.info("Column {} From Group {} Not Found In DataFrame Columns", groupColumn, groupName);
+                if (groupHeaderRow != null) {
+                    logger.info("Processing KPI Group Headers: {}", kpiGroupMap);
+
+                    logger.info("Available Columns In DataFrame: {}", Arrays.toString(columns));
+                    kpiGroupMap = kpiGroupMap != null ? kpiGroupMap : new HashMap<>();
+                    for (Map.Entry<String, List<String>> groupEntry : kpiGroupMap.entrySet()) {
+                        String groupName = groupEntry.getKey();
+                        List<String> groupColumns = groupEntry.getValue();
+                        logger.info("Processing Group: {} With Columns: {}", groupName, groupColumns);
+
+                        for (String groupColumn : groupColumns) {
+                            boolean found = false;
+                            for (int i = 0; i < columns.length; i++) {
+                                if (columns[i].equals(groupColumn)) {
+                                    columnToGroupMap.put(i, groupName);
+                                    logger.info("Mapped Column {} (Index {}) To Group {}", groupColumn, i, groupName);
+                                    found = true;
+                                    break;
                                 }
                             }
-                        }
-                        
-                        logger.info("Final Column To Group Mapping: {}", columnToGroupMap);
-                        
-                        // Group columns by their group names for merging
-                        for (Map.Entry<Integer, String> entry : columnToGroupMap.entrySet()) {
-                            String groupName = entry.getValue();
-                            Integer columnIndex = entry.getKey();
-                            groupToColumnsMap.computeIfAbsent(groupName, k -> new ArrayList<>()).add(columnIndex);
-                        }
-                        
-                        logger.info("Group To Columns Mapping: {}", groupToColumnsMap);
-                        
-                        // Create group headers and merge cells
-                        for (Map.Entry<String, List<Integer>> groupEntry : groupToColumnsMap.entrySet()) {
-                            String groupName = groupEntry.getKey();
-                            List<Integer> columnIndices = groupEntry.getValue();
-                            
-                            if (columnIndices.size() > 1) {
-                                // Sort column indices for proper merging
-                                Collections.sort(columnIndices);
-                                int startIndex = columnIndices.get(0);
-                                int endIndex = columnIndices.get(columnIndices.size() - 1);
-                                
-                                // Create the first cell with group name and style
-                                XSSFCell groupCell = groupHeaderRow.createCell(startIndex);
-                                groupCell.setCellValue(groupName);
-                                groupCell.setCellStyle(groupedHeaderStyle);
-                                
-                                // Merge cells across the group
-                                sheet.addMergedRegion(new CellRangeAddress(0, 0, startIndex, endIndex));
-                                logger.info("Merged Group '{}' Header Cells From Column {} To {}", groupName, startIndex, endIndex);
-                                
-                                // Set empty cells for other columns in the group (required for proper merging)
-                                for (int i = startIndex + 1; i <= endIndex; i++) {
-                                    XSSFCell emptyCell = groupHeaderRow.createCell(i);
-                                    emptyCell.setCellValue("");
-                                    emptyCell.setCellStyle(emptyGroupHeaderStyle);
-                                }
-                            } else {
-                                // Single column group - no merging needed
-                                int columnIndex = columnIndices.get(0);
-                                XSSFCell groupCell = groupHeaderRow.createCell(columnIndex);
-                                groupCell.setCellValue(groupName);
-                                groupCell.setCellStyle(groupedHeaderStyle);
-                                logger.info("Group '{}' Has Single Column At Index {}, No Merging Needed", groupName, columnIndex);
+                            if (!found) {
+                                logger.info("Column {} From Group {} Not Found In DataFrame Columns", groupColumn,
+                                        groupName);
                             }
                         }
-                        
-                        // Fill remaining columns with empty group headers
-                        for (int i = 0; i < columns.length; i++) {
-                            if (!columnToGroupMap.containsKey(i)) {
+                    }
+
+                    logger.info("Final Column To Group Mapping: {}", columnToGroupMap);
+
+                    for (Map.Entry<Integer, String> entry : columnToGroupMap.entrySet()) {
+                        String groupName = entry.getValue();
+                        Integer columnIndex = entry.getKey();
+                        groupToColumnsMap.computeIfAbsent(groupName, k -> new ArrayList<>()).add(columnIndex);
+                    }
+
+                    logger.info("Group To Columns Mapping: {}", groupToColumnsMap);
+
+                    for (Map.Entry<String, List<Integer>> groupEntry : groupToColumnsMap.entrySet()) {
+                        String groupName = groupEntry.getKey();
+                        List<Integer> columnIndices = groupEntry.getValue();
+
+                        if (columnIndices.size() > 1) {
+                            Collections.sort(columnIndices);
+                            int startIndex = columnIndices.get(0);
+                            int endIndex = columnIndices.get(columnIndices.size() - 1);
+
+                            XSSFCell groupCell = groupHeaderRow.createCell(startIndex);
+                            groupCell.setCellValue(groupName);
+                            groupCell.setCellStyle(groupedHeaderStyle);
+
+                            sheet.addMergedRegion(new CellRangeAddress(0, 0, startIndex, endIndex));
+                            logger.info("Merged Group '{}' Header Cells From Column {} To {}", groupName, startIndex,
+                                    endIndex);
+
+                            for (int i = startIndex + 1; i <= endIndex; i++) {
                                 XSSFCell emptyCell = groupHeaderRow.createCell(i);
                                 emptyCell.setCellValue("");
                                 emptyCell.setCellStyle(emptyGroupHeaderStyle);
-                                logger.info("No Group Found For Column {} (Index {}), Setting Empty Group Header", columns[i], i);
                             }
+                        } else {
+                            int columnIndex = columnIndices.get(0);
+                            XSSFCell groupCell = groupHeaderRow.createCell(columnIndex);
+                            groupCell.setCellValue(groupName);
+                            groupCell.setCellStyle(groupedHeaderStyle);
+                            logger.info("Group '{}' Has Single Column At Index {}, No Merging Needed", groupName,
+                                    columnIndex);
                         }
-                        
-                        // Log Final Structure Summary
-                        logger.info("=== FINAL GROUP HEADER STRUCTURE ===");
-                        logger.info("Total Columns: {}", columns.length);
-                        logger.info("Grouped Columns: {} (Total Groups: {})", columnToGroupMap.size(), groupToColumnsMap.size());
-                        logger.info("Non-Grouped Columns: {}", columns.length - columnToGroupMap.size());
-                        logger.info("Groups: {}", groupToColumnsMap.keySet());
-                        logger.info("=====================================");
                     }
 
-                // Create regular headers
+                    for (int i = 0; i < columns.length; i++) {
+                        if (!columnToGroupMap.containsKey(i)) {
+                            XSSFCell emptyCell = groupHeaderRow.createCell(i);
+                            emptyCell.setCellValue("");
+                            emptyCell.setCellStyle(emptyGroupHeaderStyle);
+                            logger.info("No Group Found For Column {} (Index {}), Setting Empty Group Header",
+                                    columns[i], i);
+                        }
+                    }
+
+                    logger.info("=== FINAL GROUP HEADER STRUCTURE ===");
+                    logger.info("Total Columns: {}", columns.length);
+                    logger.info("Grouped Columns: {} (Total Groups: {})", columnToGroupMap.size(),
+                            groupToColumnsMap.size());
+                    logger.info("Non-Grouped Columns: {}", columns.length - columnToGroupMap.size());
+                    logger.info("Groups: {}", groupToColumnsMap.keySet());
+                    logger.info("=====================================");
+                }
+
                 for (int i = 0; i < columns.length; i++) {
                     XSSFCell cell = headerRow.createCell(i);
                     cell.setCellValue(columns[i]);
                     cell.setCellStyle(headerStyle);
                 }
 
-                // STREAMING DATA PROCESSING - Use toLocalIterator() instead of collectAsList()
-                // Support multiple sheets for large datasets (50k rows per sheet)
                 logger.info("Starting Streaming Excel Data Processing with Multiple Sheets Support...");
+                logger.info("Performance Settings: MAX_ROWS_PER_SHEET={}, BATCH_SIZE_FOR_LOGGING={}",
+                        MAX_ROWS_PER_SHEET, BATCH_SIZE_FOR_LOGGING);
+
                 long totalRowCount = 0;
                 int currentSheetIndex = 0;
-                final int MAX_ROWS_PER_SHEET = 10000; // 10k rows per sheet
                 XSSFSheet currentSheet = sheet;
                 XSSFRow currentGroupHeaderRow = groupHeaderRow;
                 XSSFRow currentHeaderRow = headerRow;
-                
+
+                long dataProcessingStartTime = System.currentTimeMillis();
+                long lastMemoryCheckTime = dataProcessingStartTime;
+
                 Iterator<org.apache.spark.sql.Row> rowIterator = expectedDF.toLocalIterator();
-                
+
                 while (rowIterator.hasNext()) {
                     org.apache.spark.sql.Row sparkRow = rowIterator.next();
-                    
-                    // Check if we need to create a new sheet
                     long currentSheetRowCount = totalRowCount % MAX_ROWS_PER_SHEET;
                     if (currentSheetRowCount == 0 && totalRowCount > 0) {
-                        // Create new sheet
                         currentSheetIndex++;
                         String sheetName = frequency + "_" + currentSheetIndex;
                         currentSheet = workbook.createSheet(sheetName);
-                        logger.info("Created new sheet: {} for rows {} to {}", sheetName, totalRowCount + 1, totalRowCount + MAX_ROWS_PER_SHEET);
-                        
-                        // Copy column widths from the first sheet to maintain consistency
+                        logger.info("Created New Sheet: {} for Rows {} to {}", sheetName, totalRowCount + 1,
+                                totalRowCount + MAX_ROWS_PER_SHEET);
+
                         for (int i = 0; i < columns.length; i++) {
                             int columnWidth = sheet.getColumnWidth(i);
                             currentSheet.setColumnWidth(i, columnWidth);
                         }
-                        
-                        // Recreate headers for new sheet
+
                         if (kpiGroupMap != null && !kpiGroupMap.isEmpty()) {
                             currentGroupHeaderRow = currentSheet.createRow(0);
                             currentHeaderRow = currentSheet.createRow(1);
                             dataStartRowIdx = 2;
-                            
-                            // Copy row heights from the first sheet
+
                             currentGroupHeaderRow.setHeight(sheet.getRow(0).getHeight());
                             currentHeaderRow.setHeight(sheet.getRow(1).getHeight());
-                            
-                            // Recreate group headers
+
                             for (int i = 0; i < columns.length; i++) {
                                 XSSFCell groupCell = currentGroupHeaderRow.createCell(i);
                                 String groupName = columnToGroupMap.get(i);
@@ -623,10 +627,8 @@ public class WriteMetricReport extends Processor {
                                     groupCell.setCellStyle(emptyGroupHeaderStyle);
                                 }
                             }
-                            
-                            // Recreate merged regions for group headers
+
                             for (Map.Entry<String, List<Integer>> groupEntry : groupToColumnsMap.entrySet()) {
-                                String groupName = groupEntry.getKey();
                                 List<Integer> columnIndices = groupEntry.getValue();
                                 if (columnIndices.size() > 1) {
                                     Collections.sort(columnIndices);
@@ -639,33 +641,28 @@ public class WriteMetricReport extends Processor {
                             currentGroupHeaderRow = null;
                             currentHeaderRow = currentSheet.createRow(0);
                             dataStartRowIdx = 1;
-                            
-                            // Copy row height from the first sheet
                             currentHeaderRow.setHeight(sheet.getRow(0).getHeight());
                         }
-                        
-                        // Recreate regular headers
+
                         for (int i = 0; i < columns.length; i++) {
                             XSSFCell cell = currentHeaderRow.createCell(i);
                             cell.setCellValue(columns[i]);
                             cell.setCellStyle(headerStyle);
                         }
-                        
-                        // Apply freeze pane to new sheet (same as first sheet)
+
                         if (kpiGroupMap != null && !kpiGroupMap.isEmpty()) {
                             currentSheet.createFreezePane(0, 2);
                         } else {
                             currentSheet.createFreezePane(0, 1);
                         }
-                        
-                        // Apply auto filter to new sheet (will be updated after data is written)
+
                         if (kpiGroupMap != null && !kpiGroupMap.isEmpty()) {
                             currentSheet.setAutoFilter(new CellRangeAddress(1, 1, 0, columns.length - 1));
                         } else {
                             currentSheet.setAutoFilter(new CellRangeAddress(0, 0, 0, columns.length - 1));
                         }
                     }
-                    
+
                     XSSFRow dataRow = currentSheet.createRow((int) (currentSheetRowCount + dataStartRowIdx));
 
                     for (int j = 0; j < columns.length; j++) {
@@ -683,10 +680,8 @@ public class WriteMetricReport extends Processor {
                             cell.setCellValue(cellStr);
                         }
 
-                        // Start With Base Data Style
                         CellStyle cellStyle = dataStyle;
 
-                        // RAG Logic - Only Apply To Columns That Match KPI Codes
                         String colName = columns[j];
                         if (colName != null && colName.contains("-") && ragConfigurationMap != null) {
                             try {
@@ -708,9 +703,11 @@ public class WriteMetricReport extends Processor {
                                                         if (ragStyle == null) {
                                                             ragStyle = workbook.createCellStyle();
                                                             ragStyle.cloneStyleFrom(dataStyle);
+                                                            logger.info("Applying RAG color: {}", hexColor);
                                                             XSSFColor fillColor = new XSSFColor(
                                                                     java.awt.Color.decode(hexColor),
                                                                     null);
+                                                            logger.info("Created XSSFColor: {}", fillColor);
                                                             ((XSSFCellStyle) ragStyle)
                                                                     .setFillForegroundColor(fillColor);
                                                             ragStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
@@ -722,74 +719,79 @@ public class WriteMetricReport extends Processor {
                                                     }
                                                 }
                                             } catch (Exception ex) {
-                                                logger.info("Error evaluating RAG condition: {} for KPI {}: {}", expression, kpiCode, ex.getMessage());
+                                                logger.info("Error evaluating RAG condition: {} for KPI {}: {}",
+                                                        expression, kpiCode, ex.getMessage());
                                             }
                                         }
                                     }
                                 }
                             } catch (Exception e) {
-                                logger.info("Error processing RAG configuration for column {}: {}", colName, e.getMessage());
+                                logger.info("Error processing RAG configuration for column {}: {}", colName,
+                                        e.getMessage());
                             }
                         }
 
                         cell.setCellStyle(cellStyle);
                     }
-                    
+
                     totalRowCount++;
-                    if (totalRowCount % 100000 == 0) {
-                        logger.info("Processed {} rows...", totalRowCount);
+
+                    if (totalRowCount % BATCH_SIZE_FOR_LOGGING == 0) {
+                        long currentTime = System.currentTimeMillis();
+                        long elapsedTime = currentTime - dataProcessingStartTime;
+                        double rowsPerSecond = (totalRowCount * 1000.0) / elapsedTime;
+
+                        logger.info("Progress: {} Rows Processed in {} ms ({} Rows/Sec)",
+                                totalRowCount, elapsedTime, String.format("%.2f", rowsPerSecond));
+
+                        if (currentTime - lastMemoryCheckTime > MEMORY_CHECK_INTERVAL) {
+                            logMemoryUsage("During Processing");
+                            lastMemoryCheckTime = currentTime;
+                        }
                     }
                 }
-                
-                logger.info("Total rows processed: {}", totalRowCount);
+
+                logger.info("Total Rows Processed: {}", totalRowCount);
                 if (currentSheetIndex > 0) {
-                    logger.info("Created {} additional sheets for large dataset", currentSheetIndex);
+                    logger.info("Created {} Additional Sheets for Large Dataset", currentSheetIndex);
                 }
 
-                // Auto-size columns and set consistent widths across all sheets
                 for (int i = 0; i < columns.length; i++) {
                     sheet.autoSizeColumn(i);
                     int currentWidth = sheet.getColumnWidth(i);
                     int finalWidth = currentWidth + 1000;
                     sheet.setColumnWidth(i, finalWidth);
-                    
-                    // Apply same column width to all additional sheets
+
                     for (int sheetIdx = 1; sheetIdx <= currentSheetIndex; sheetIdx++) {
                         XSSFSheet additionalSheet = workbook.getSheetAt(sheetIdx);
                         additionalSheet.setColumnWidth(i, finalWidth);
                     }
                 }
 
-                // Update auto-filter ranges for all sheets based on actual data
                 if (groupHeaderRow != null) {
-                    // Freeze First 2 Rows (Group Header And Regular Header)
                     sheet.createFreezePane(0, 2);
-                    
-                    // Calculate rows per sheet for auto-filter
                     int rowsInFirstSheet = Math.min((int) totalRowCount, MAX_ROWS_PER_SHEET);
                     sheet.setAutoFilter(new CellRangeAddress(1, rowsInFirstSheet + 1, 0, columns.length - 1));
-                    
-                    // Update auto-filter for additional sheets
+
                     for (int sheetIdx = 1; sheetIdx <= currentSheetIndex; sheetIdx++) {
                         XSSFSheet additionalSheet = workbook.getSheetAt(sheetIdx);
                         int startRow = sheetIdx * MAX_ROWS_PER_SHEET;
                         int endRow = Math.min(startRow + MAX_ROWS_PER_SHEET - 1, (int) totalRowCount);
-                        additionalSheet.setAutoFilter(new CellRangeAddress(1, endRow - startRow + 1, 0, columns.length - 1));
+                        additionalSheet
+                                .setAutoFilter(new CellRangeAddress(1, endRow - startRow + 1, 0, columns.length - 1));
                     }
                 } else {
-                    // Freeze First Row (Regular Header Only)
                     sheet.createFreezePane(0, 1);
-                    
-                    // Calculate rows per sheet for auto-filter
+
                     int rowsInFirstSheet = Math.min((int) totalRowCount, MAX_ROWS_PER_SHEET);
                     sheet.setAutoFilter(new CellRangeAddress(0, rowsInFirstSheet, 0, columns.length - 1));
-                    
-                    // Update auto-filter for additional sheets
+
                     for (int sheetIdx = 1; sheetIdx <= currentSheetIndex; sheetIdx++) {
                         XSSFSheet additionalSheet = workbook.getSheetAt(sheetIdx);
                         int startRow = sheetIdx * MAX_ROWS_PER_SHEET;
                         int endRow = Math.min(startRow + MAX_ROWS_PER_SHEET - 1, (int) totalRowCount);
-                        additionalSheet.setAutoFilter(new CellRangeAddress(0, endRow - startRow, 0, columns.length - 1));
+                        additionalSheet
+                                .setAutoFilter(new CellRangeAddress(0, endRow - startRow, 0, columns.length - 1));
                     }
                 }
 
@@ -798,7 +800,7 @@ public class WriteMetricReport extends Processor {
                 }
             }
 
-            logger.info("📊 Excel File Created Successfully at: {}", excelFilePath);
+            logger.info("Excel File Created Successfully At: {}", excelFilePath);
 
             logger.info("Step 3: Creating MinIO S3 Client");
             AWSCredentials credentials = new BasicAWSCredentials(minioAccessKey, minioSecretKey);
@@ -814,7 +816,7 @@ public class WriteMetricReport extends Processor {
                     .withCredentials(new AWSStaticCredentialsProvider(credentials))
                     .build();
 
-            logger.info("📁 MinIO S3 Client Created Successfully");
+            logger.info("MinIO S3 Client Created Successfully");
 
             logger.info("Step 4: Uploading to Temporary MinIO Path: {}", tmpMinioPath);
             inputStream = new FileInputStream(excelFile);
@@ -822,15 +824,15 @@ public class WriteMetricReport extends Processor {
             long excelFileSize = excelFile.length();
             metadata.setContentLength(excelFileSize);
             s3client.putObject(bucketName, tmpMinioPath, inputStream, metadata);
-            logger.info("📁 Excel File Uploaded Successfully to Temporary MinIO Path");
+            logger.info("Excel File Uploaded Successfully to Temporary MinIO Path");
 
             String fileSize = String.valueOf(excelFileSize);
             jobContext.setParameters("FILE_SIZE", fileSize);
-            logger.info("FILE_SIZE '{}' Set to Job Context Successfully! ✅", fileSize);
+            logger.info("FILE_SIZE '{}' Set to Job Context Successfully!", fileSize);
 
             logger.info("Step 5: Copying to Final MinIO Path: {}", finalMinioPath);
             s3client.copyObject(bucketName, tmpMinioPath, bucketName, finalMinioPath);
-            logger.info("📁 Excel File Copied Successfully to Final Path");
+            logger.info("Excel File Copied Successfully to Final Path");
 
             if (!s3client.doesObjectExist(bucketName, finalMinioPath)) {
                 throw new RuntimeException("Failed to Verify Final File Exists: " + finalMinioPath);
@@ -838,17 +840,17 @@ public class WriteMetricReport extends Processor {
 
             logger.info("Step 6: Deleting Temporary Files from MinIO");
             s3client.deleteObject(bucketName, tmpMinioPath);
-            logger.info("🧹 Temporary MinIO Objects Deleted Successfully");
+            logger.info("Temporary MinIO Objects Deleted Successfully");
 
             logger.info("Step 7: Cleaning Up Local Temporary Files");
             FileUtils.deleteDirectory(new File(tmpDirPath));
-            logger.info("🧹 Local Temporary Files Deleted Successfully");
+            logger.info("Local Temporary Files Deleted Successfully");
 
-            logger.info("Excel Report Uploaded Successfully! ✅");
+            logger.info("Excel Report Uploaded Successfully!");
             logger.info("Final file location: {}/{}", bucketName, finalMinioPath);
 
         } catch (Exception e) {
-            logger.error("❌ Error in Processing Excel Report, Message: {}, Error: {}", e.getMessage(), e);
+            logger.error("Error in Processing Excel Report, Message: {}, Error: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to Process Excel Report", e);
         } finally {
             if (inputStream != null) {
@@ -873,6 +875,7 @@ public class WriteMetricReport extends Processor {
         String frequency = jobContextMap.get("frequency");
         String reportType = "Metric";
         String reportFormat = jobContextMap.get("REPORT_FORMAT_TYPE");
+        reportFormat = reportFormat == null ? "csv" : reportFormat;
         String epochTime = String.valueOf(System.currentTimeMillis());
 
         String reportFileName = reportName + "_" + domain + "_" + vendor + "_" + frequency
@@ -891,36 +894,30 @@ public class WriteMetricReport extends Processor {
         return reportFileName;
     }
 
-    // RAG Configuration Evaluation Methods
     private static boolean evaluateCondition(String expression, double value, String kpiCode) {
-        // Remove spaces and replace KPI#code with the actual value
         String cleanExpr = expression.replace(" ", "").replace("KPI#" + kpiCode, String.valueOf(value));
-        
-        // Remove outer parentheses if they exist
+
         if (cleanExpr.startsWith("(") && cleanExpr.endsWith(")")) {
             cleanExpr = cleanExpr.substring(1, cleanExpr.length() - 1);
         }
-        
-        // Handle compound conditions with &&
+
         if (cleanExpr.contains("&&")) {
             String[] parts = cleanExpr.split("&&");
             boolean leftResult = evaluateSimpleCondition(parts[0]);
             boolean rightResult = evaluateSimpleCondition(parts[1]);
             return leftResult && rightResult;
         }
-        
-        // Handle compound conditions with ||
+
         if (cleanExpr.contains("||")) {
             String[] parts = cleanExpr.split("\\|\\|");
             boolean leftResult = evaluateSimpleCondition(parts[0]);
             boolean rightResult = evaluateSimpleCondition(parts[1]);
             return leftResult || rightResult;
         }
-        
-        // Handle simple condition
+
         return evaluateSimpleCondition(cleanExpr);
     }
-    
+
     private static boolean evaluateSimpleCondition(String condition) {
         try {
             if (condition.contains(">=")) {
@@ -960,9 +957,46 @@ public class WriteMetricReport extends Processor {
                 return val == threshold;
             }
         } catch (Exception e) {
-            logger.error("Error evaluating condition: {} - {}", condition, e.getMessage());
+            logger.error("Error Evaluating Condition: {} - {}", condition, e.getMessage());
         }
         return false;
+    }
+
+    private static void initializePerformanceMonitoring() {
+        Runtime runtime = Runtime.getRuntime();
+        long currentMemory = runtime.totalMemory() - runtime.freeMemory();
+
+        logger.info("Performance Monitoring Initialized");
+        logger.info("Initial Memory Usage: {} MB", currentMemory / (1024 * 1024));
+        logger.info("Available Memory: {} MB", runtime.maxMemory() / (1024 * 1024));
+    }
+
+    private static void logMemoryUsage(String label) {
+        Runtime runtime = Runtime.getRuntime();
+        long currentMemory = runtime.totalMemory() - runtime.freeMemory();
+        long usedMemoryMB = currentMemory / (1024 * 1024);
+        long maxMemoryMB = runtime.maxMemory() / (1024 * 1024);
+        long freeMemoryMB = runtime.freeMemory() / (1024 * 1024);
+
+        logger.info("Memory Usage [{}]: Used={} MB, Free={} MB, Max={} MB",
+                label, usedMemoryMB, freeMemoryMB, maxMemoryMB);
+    }
+
+    private static void logPerformanceSummary(long startTime, long endTime, long processingTime) {
+        long totalTime = endTime - startTime;
+        long overheadTime = totalTime - processingTime;
+
+        logger.info("=== PERFORMANCE SUMMARY ===");
+        logger.info("Total Execution Time: {} ms", totalTime);
+        logger.info("Data Processing Time: {} ms", processingTime);
+        logger.info("Overhead Time: {} ms", overheadTime);
+        logger.info("Processing Efficiency: {:.2f}%", (double) processingTime / totalTime * 100);
+        logger.info("==========================");
+    }
+
+    private static void recordStepTime(String stepName, long startTime) {
+        long stepTime = System.currentTimeMillis() - startTime;
+        logger.info("Step '{}' Completed In {} ms", stepName, stepTime);
     }
 
 }

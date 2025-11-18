@@ -32,7 +32,7 @@ public class OTFOpenAlertMain {
                         String READ_PM_ALERT_CONFIGURATION_QUERY = "SELECT PERFORMANCE_ALERT_ID_PK, CONFIGURATION, EXPRESSION, DOMAIN, VENDOR, NAME, DESCRIPTION, ALERTTYPE, ALERTID,TECHNOLOGY FROM PERFORMANCE_ALERT WHERE DOMAIN = '"
                                         + domain + "' AND VENDOR = '" + vendor + "' AND TECHNOLOGY = '" + technology
                                         + "' AND UPPER(JSON_UNQUOTE(JSON_EXTRACT(REPLACE(REPLACE(CONFIGURATION,'\"',''),\"'\",'\"'),'$.frequency[0]'))) = '"
-                                        + frequency + "' AND DELETED = 0 AND PERFORMANCE_ALERT_ID_PK IN (1749)";
+                                        + frequency + "' AND PERFORMANCE_ALERT_ID_PK IN (1726)";
 
                         logger.info("READ PM ALERT CONFIGURATION QUERY: {}", READ_PM_ALERT_CONFIGURATION_QUERY);
 
@@ -62,7 +62,6 @@ public class OTFOpenAlertMain {
                         String SPARK_FM_JDBC_USERNAME = jobContext.getParameter("SPARK_FM_JDBC_USERNAME");
                         String SPARK_FM_JDBC_PASSWORD = jobContext.getParameter("SPARK_FM_JDBC_PASSWORD");
 
-
                         dataFrame = (new JDBCReadCustom(dataFrame, 2, "READ ACTIVE ALARM LIBRARY", SPARK_FM_JDBC_DRIVER,
                                         SPARK_FM_JDBC_URL, SPARK_FM_JDBC_USERNAME, SPARK_FM_JDBC_PASSWORD,
                                         READ_ACTIVE_ALARM_LIBRARY_QUERY,
@@ -70,12 +69,10 @@ public class OTFOpenAlertMain {
                                         (String) null))
                                         .executeAndGetResultDataframe(jobContext);
 
-
                         dataFrame.show(10, false);
                         logger.info("READ ACTIVE ALARM LIBRARY Executed Successfully!");
 
                         String JOIN_QUERY = "SELECT pa.PERFORMANCE_ALERT_ID_PK, pa.CONFIGURATION, pa.EXPRESSION, pa.DOMAIN, pa.VENDOR, pa.ALERTID, pa.NAME, pa.DESCRIPTION, pa.TECHNOLOGY, al.ALARM_IDENTIFIER, al.ALARM_NAME, al.CLASSIFICATION, al.NETYPE, al.DEFAULT_SEVERITY, al.EMS_TYPE, al.EVENT_TYPE, al.ALARM_ID, al.SERVICE_AFFECTING, al.CORRELATION_ENABLE, al.MANUAL_CLEARED, al.PROBABLE_CAUSE, al.PRIORITY, al.ALARM_LAYER, al.ALARM_GROUP, al.EQUIPMENT_TYPE, al.IS_SOUTH_BOUND_INTEGRATION FROM PERFORMANCE_ALERT pa JOIN ALARM_LIBRARY al ON pa.ALERTID = al.ALARM_IDENTIFIER";
-
 
                         logger.info("JOIN QUERY: {}", JOIN_QUERY);
                         dataFrame = (new ExecuteSparkSQLD1Custom(dataFrame, 3,
@@ -86,7 +83,7 @@ public class OTFOpenAlertMain {
                         dataFrame.show(5);
                         logger.info("JOIN PERFORMANCE ALERT AND ALARM LIBRARY Executed Successfully!");
 
-                        dataFrame = (new OTFAlertCloseExtract(dataFrame, 4, "EXTRACT CONFIGURATION"))
+                        dataFrame = (new OTFAlertOpenExtract(dataFrame, 4, "EXTRACT CONFIGURATION"))
                                         .executeAndGetResultDataframe(jobContext);
                         dataFrame.show(5);
                         logger.info("EXTRACT CONFIGURATION Executed Successfully!");
@@ -98,16 +95,14 @@ public class OTFOpenAlertMain {
 
                         for (int i = startIndex; i < endIndex; ++i) {
 
-
                                 dataFrame = (new OTFAlertReadMinioFiles(dataFrame, 5, "READ MINIO FILES"))
                                                 .executeAndGetResultDataframe(jobContext);
 
-                                dataFrame.show(5, false);
+                                dataFrame.show(25, false);
                                 logger.info("READ MINIO FILES Executed Successfully!");
 
-
                                 String RAW_FILE_COUNTER_NODE_AGGR_QUERY = jobContext
-                                                .getParameter("RAW_FILE_COUNTER_NODE_AGGR_QUERY");
+                                                .getParameter("RAW_FILE_COUNTER_NODE_AGGR_QUERY" + i);
                                 dataFrame = (new ExecuteSparkSQLD1Custom(dataFrame, 6,
                                                 "RAW FILE COUNTER NODE AGGREGATION",
                                                 RAW_FILE_COUNTER_NODE_AGGR_QUERY, "rawFileNodeAggrData", (String) null))
@@ -115,11 +110,10 @@ public class OTFOpenAlertMain {
                                 dataFrame.show(5);
                                 logger.info("RAW FILE COUNTER NODE AGGREGATION Executed Successfully!");
 
-
                                 String FILTER_LEVEL = jobContext.getParameter("FILTER_LEVEL" + i);
-                                String FILTER_QUERY_FINAL = jobContext.getParameter("FILTER_QUERY_FINAL");
+                                String FILTER_QUERY_FINAL = jobContext.getParameter("FILTER_QUERY_FINAL" + i);
                                 String QUERY_FOR_FINAL_COUNTER_DATA = "SELECT CONCAT(metaData['" + FILTER_LEVEL
-                                                + "'], COALESCE('',''),'##',finalKey) AS finalKey, "
+                                                + "'], COALESCE('',''),'##',finalKey) AS finalKey, quarterKey, "
                                                 + FILTER_QUERY_FINAL
                                                 + ", metaData FROM rawFileNodeAggrData";
                                 logger.info("QUERY FOR FINAL COUNTER DATA: {}", QUERY_FOR_FINAL_COUNTER_DATA);
@@ -129,21 +123,21 @@ public class OTFOpenAlertMain {
                                 dataFrame.show(5, false);
                                 logger.info("QUERY FOR FINAL COUNTER DATA Executed Successfully!");
 
-                                String COUNTER_NODE_AGGR_QUERY = jobContext.getParameter("COUNTER_NODE_AGGR_QUERY");
+                                String COUNTER_NODE_AGGR_QUERY = jobContext.getParameter("COUNTER_NODE_AGGR_QUERY" + i);
                                 dataFrame = (new ExecuteSparkSQLD1Custom(dataFrame, 8, "COUNTER NODE AGGREGATION QUERY",
                                                 COUNTER_NODE_AGGR_QUERY, "finalNodeAggrData", (String) null))
                                                 .executeAndGetResultDataframe(jobContext);
                                 dataFrame.show(5, false);
                                 logger.info("COUNTER NODE AGGREGATION QUERY Executed Successfully!");
 
-                                String COUNTER_TIME_AGGR_QUERY = jobContext.getParameter("COUNTER_TIME_AGGR_QUERY");
+                                String COUNTER_TIME_AGGR_QUERY = jobContext.getParameter("COUNTER_TIME_AGGR_QUERY" + i);
                                 dataFrame = (new ExecuteSparkSQLD1Custom(dataFrame, 9, "COUNTER TIME AGGREGATION QUERY",
                                                 COUNTER_TIME_AGGR_QUERY, "timeAggrData", (String) null))
                                                 .executeAndGetResultDataframe(jobContext);
                                 dataFrame.show(5);
                                 logger.info("COUNTER TIME AGGREGATION QUERY Executed Successfully!");
 
-                                String COUNTER_MAP_QUERY = jobContext.getParameter("COUNTER_MAP_QUERY");
+                                String COUNTER_MAP_QUERY = jobContext.getParameter("COUNTER_MAP_QUERY" + i);
                                 String EXECUTE_COUNTER_MAP_QUERY = "SELECT finalKey, " + COUNTER_MAP_QUERY
                                                 + " , metaData FROM timeAggrData";
                                 dataFrame = (new ExecuteSparkSQLD1Custom(dataFrame, 10, "COUNTER MAP QUERY",
@@ -201,7 +195,7 @@ public class OTFOpenAlertMain {
 
         private static JobContext setParametersToJobContext(JobContext jobContext) {
                 jobContext.setParameters("SPARK_PM_JDBC_URL",
-                                "jdbc:mysql://localhost:3306/PERFORMANCE_A_LAB?autoReconnect=true&allowPublicKeyRetrieval=true&useSSL=false");
+                                "jdbc:mysql://localhost:3306/RLTL_OCT?autoReconnect=true&allowPublicKeyRetrieval=true&useSSL=false");
                 jobContext.setParameters("SPARK_PM_JDBC_DRIVER", "org.mariadb.jdbc.Driver");
                 jobContext.setParameters("SPARK_PM_JDBC_USERNAME", "root");
                 jobContext.setParameters("SPARK_PM_JDBC_PASSWORD", "root");
@@ -230,14 +224,14 @@ public class OTFOpenAlertMain {
                 jobContext.setParameters("TECHNOLOGY", "COMMON");
                 jobContext.setParameters("EMS_TYPE", "NA");
                 jobContext.setParameters("NE_TYPE", "'INTERFACE','ROUTER'");
-                jobContext.setParameters("FREQUENCY", "15 MIN");
-                jobContext.setParameters("BASE_TRINO_ORC_PATH_DATE", "250825");
-                jobContext.setParameters("BASE_TRINO_ORC_PATH_TIME", "0745");
+                jobContext.setParameters("FREQUENCY", "PERHOUR");
+                jobContext.setParameters("BASE_TRINO_ORC_PATH_DATE", "251027");
+                jobContext.setParameters("BASE_TRINO_ORC_PATH_TIME", "1000");
                 jobContext.setParameters("BASE_TRINO_ORC_PATH", "s3a://performance/JOB/ORC/");
-                jobContext.setParameters("BASE_TRINO_NE_PATH_DATE", "20250825");
-                // jobContext.setParameters("BASE_TRINO_NE_PATH_TIME", "0745");
+                jobContext.setParameters("BASE_TRINO_NE_PATH_DATE", "20251027");
+                // jobContext.setParameters("BASE_TRINO_NE_PATH_TIME", "1800");
                 jobContext.setParameters("BASE_TRINO_NE_PATH", "s3a://performance/NE_META/");
-                jobContext.setParameters("TIMESTAMP", "2025-08-25 07:45:00.000000+0000");
+                jobContext.setParameters("TIMESTAMP", "2025-10-27 10:00:00.000000+0000");
                 jobContext.setParameters("SPARK_KAFKA_BROKER_ANSIBLE", "localhost:9092");
                 jobContext.setParameters("KAFKA_TOPIC_NAME", "pm.alerts.fault");
                 return jobContext;

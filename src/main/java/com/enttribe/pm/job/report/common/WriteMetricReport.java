@@ -408,8 +408,8 @@ public class WriteMetricReport extends Processor {
             }
 
             logger.info("Step 2: Converting DataFrame to Excel");
-            logger.info("DataFrame Partitions: {}, Estimated Rows: {}",
-                    expectedDF.rdd().getNumPartitions(), expectedDF.count());
+            // logger.info("DataFrame Partitions: {}, Estimated Rows: {}",
+            //         expectedDF.rdd().getNumPartitions(), expectedDF.count());
 
             String excelFilePath = tmpDirPath + "/" + reportFileName;
             File excelFile = new File(excelFilePath);

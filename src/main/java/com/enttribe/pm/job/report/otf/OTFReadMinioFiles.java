@@ -17,6 +17,7 @@ import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.Column;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -28,8 +29,13 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class OTFReadMinioFiles extends Processor {
+
+    private static final boolean IS_LOG_ENABLED = true;
+    private static final Logger logger = LoggerFactory.getLogger(OTFReadMinioFiles.class);
 
     public OTFReadMinioFiles() {
         super();
@@ -38,18 +44,18 @@ public class OTFReadMinioFiles extends Processor {
     public OTFReadMinioFiles(Dataset<Row> dataframe, Integer id, String processorName) {
         super(id, processorName);
         this.dataFrame = dataframe;
-        logger.error("OTFReadMinioFiles Constructor Called with ID: {} and Processor Name: {}", id, processorName);
     }
 
     public OTFReadMinioFiles(Integer id, String processorName) {
         super(id, processorName);
-        logger.error("OTFReadMinioFiles Constructor Called with ID: {} and Processor Name: {}", id, processorName);
     }
 
     @Override
     public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) throws Exception {
 
-        logger.error("Updated OTFReadMinioFiles Execution Started !");
+        if (IS_LOG_ENABLED) {
+            logger.info("OTFReadMinioFiles Execution Started!");
+        }
 
         try {
 
@@ -67,18 +73,28 @@ public class OTFReadMinioFiles extends Processor {
                 if (trinoOrcDF == null) {
                     Dataset<Row> emptyDF = getEmptyDF(jobContext, jobContext.getParameter("FINAL_COUNTER_INFO"));
                     emptyDF.createOrReplaceTempView("JOINED_RESULT");
-                    emptyDF.show(5);
-                    logger.error("++++++++++[READ MINIO FILES]++++++++++");
+
+                    if (IS_LOG_ENABLED) {
+                        emptyDF.show(5);
+                        logger.info("++++++++++[READ MINIO FILES]++++++++++");
+                    }
                     return emptyDF;
                 }
                 trinoOrcDF.createOrReplaceTempView("TRINO_ORC_DF");
-                logger.error("Trino ORC DataFrame Loaded Successfully!");
+
+                if (IS_LOG_ENABLED) {
+                    logger.info("Trino ORC DataFrame Loaded Successfully!");
+                    long count = trinoOrcDF.count();
+                    logger.info("Trino ORC DataFrame Count: {}", count);
+                }
             } catch (Exception e) {
                 logger.error("Exception While Executing OTFReadMinioFiles: {}", e.getMessage());
                 Dataset<Row> emptyDF = getEmptyDF(jobContext, jobContext.getParameter("FINAL_COUNTER_INFO"));
                 emptyDF.createOrReplaceTempView("JOINED_RESULT");
-                emptyDF.show(5);
-                logger.error("++++++++++[READ MINIO FILES]++++++++++");
+                if (IS_LOG_ENABLED) {
+                    emptyDF.show(5);
+                    logger.info("++++++++++[READ MINIO FILES]++++++++++");
+                }
                 return emptyDF;
             }
 
@@ -97,7 +113,9 @@ public class OTFReadMinioFiles extends Processor {
                     });
 
             String trinoNeFilePath = getTrinoNePath(baseTrinoNePath, fromDate, toDate, reportWidgetDetailsMap);
-            logger.error("Trino NE File Path: {}", trinoNeFilePath);
+            if (IS_LOG_ENABLED) {
+                logger.info("Trino NE File Path: {}", trinoNeFilePath);
+            }
 
             try {
 
@@ -105,23 +123,31 @@ public class OTFReadMinioFiles extends Processor {
                 if (trinoNeDF == null) {
                     Dataset<Row> emptyDF = getEmptyDF(jobContext, jobContext.getParameter("FINAL_COUNTER_INFO"));
                     emptyDF.createOrReplaceTempView("JOINED_RESULT");
-                    emptyDF.show(5);
-                    logger.error("++++++++++[READ MINIO FILES]++++++++++");
+                    if (IS_LOG_ENABLED) {
+                        emptyDF.show(5);
+                        logger.info("++++++++++[READ MINIO FILES]++++++++++");
+                    }
+
                     return emptyDF;
                 }
                 trinoNeDF.createOrReplaceTempView("TRINO_NE_DF");
 
                 trinoNeDF = filterTrinoNeDFBasedOnNodeAndAggregationDetails(trinoNeDF, jobContext);
                 trinoNeDF.createOrReplaceTempView("TRINO_NE_DF");
-                trinoNeDF.show(5);
-                logger.error("++++++++++[READ MINIO FILES]++++++++++");
+
+                if (IS_LOG_ENABLED) {
+                    long count = trinoNeDF.count();
+                    logger.info("Trino NE DataFrame Count: {}", count);
+                }
 
             } catch (Exception e) {
                 logger.error("Exception While Executing OTFReadMinioFiles: {}", e.getMessage());
                 Dataset<Row> emptyDF = getEmptyDF(jobContext, jobContext.getParameter("FINAL_COUNTER_INFO"));
                 emptyDF.createOrReplaceTempView("JOINED_RESULT");
-                emptyDF.show(5);
-                logger.error("++++++++++[READ MINIO FILES]++++++++++");
+                if (IS_LOG_ENABLED) {
+                    emptyDF.show(5);
+                    logger.info("++++++++++[READ MINIO FILES]++++++++++");
+                }
                 return emptyDF;
             }
 
@@ -135,13 +161,19 @@ public class OTFReadMinioFiles extends Processor {
                 String categoryList = jobContext.getParameter("CATEGORY_LIST");
 
                 String isKpiCodeListEmpty = jobContext.getParameter("IS_KPI_CODE_LIST_EMPTY");
-                logger.error("Is KPI Code List Empty: {}", isKpiCodeListEmpty);
+                if (IS_LOG_ENABLED) {
+                    logger.info("Is KPI Code List Empty: {}", isKpiCodeListEmpty);
+                }
 
+                // if (StringUtils.isNotBlank(isKpiCodeListEmpty) &&
+                // isKpiCodeListEmpty.equalsIgnoreCase("true")) {
                 if (StringUtils.isNotBlank(isKpiCodeListEmpty) && isKpiCodeListEmpty.equalsIgnoreCase("true")) {
                     Dataset<Row> joinedResult = getFinalResult(jobContext, null, null, null, finalQueryMap);
                     joinedResult.createOrReplaceTempView("JOINED_RESULT");
-                    joinedResult.show(5);
-                    logger.error("++++++++++[READ MINIO FILES]++++++++++");
+                    if (IS_LOG_ENABLED) {
+                        joinedResult.show(5);
+                        logger.info("++++++++++[READ MINIO FILES]++++++++++");
+                    }
                     return joinedResult;
                 }
 
@@ -158,8 +190,10 @@ public class OTFReadMinioFiles extends Processor {
                         categoryList, counterInfoMapObject, finalQueryMap);
 
                 joinedResult.createOrReplaceTempView("JOINED_RESULT");
-                joinedResult.show(5);
-                logger.error("++++++++++[READ MINIO FILES]++++++++++");
+                if (IS_LOG_ENABLED) {
+                    joinedResult.show(5);
+                    logger.info("++++++++++[READ MINIO FILES]++++++++++");
+                }
 
                 return joinedResult;
 
@@ -167,8 +201,11 @@ public class OTFReadMinioFiles extends Processor {
                 logger.error("Exception While Executing OTFReadMinioFiles: {}", e.getMessage());
                 Dataset<Row> emptyDF = getEmptyDF(jobContext, jobContext.getParameter("FINAL_COUNTER_INFO"));
                 emptyDF.createOrReplaceTempView("JOINED_RESULT");
-                emptyDF.show(5);
-                logger.error("++++++++++[READ MINIO FILES]++++++++++");
+                if (IS_LOG_ENABLED) {
+                    emptyDF.show(5);
+                    logger.info("++++++++++[READ MINIO FILES]++++++++++");
+                }
+
                 return emptyDF;
             }
 
@@ -176,8 +213,10 @@ public class OTFReadMinioFiles extends Processor {
             logger.error("Exception While Executing OTFReadMinioFiles: {}", e.getMessage(), e);
             Dataset<Row> emptyDF = getEmptyDF(jobContext, jobContext.getParameter("FINAL_COUNTER_INFO"));
             emptyDF.createOrReplaceTempView("JOINED_RESULT");
-            emptyDF.show(5);
-            logger.error("++++++++++[READ MINIO FILES]++++++++++");
+            if (IS_LOG_ENABLED) {
+                emptyDF.show(5);
+                logger.info("++++++++++[READ MINIO FILES]++++++++++");
+            }
             return emptyDF;
         }
     }
@@ -193,22 +232,24 @@ public class OTFReadMinioFiles extends Processor {
             Map<String, String> nodeAndAggregationDetailsMap = new ObjectMapper().readValue(nodeAndAggregationDetails,
                     Map.class);
 
-            logger.error("Node And Aggregation Details: {}", nodeAndAggregationDetailsMap);
+            if (IS_LOG_ENABLED) {
+                logger.info("Node And Aggregation Details: {}", nodeAndAggregationDetailsMap);
+            }
 
             String isGeoL1MultiSelect = nodeAndAggregationDetailsMap.get("IS_GEOGRAPHY_L1_MULTI_SELECT");
             String isGeoL2MultiSelect = nodeAndAggregationDetailsMap.get("IS_GEOGRAPHY_L2_MULTI_SELECT");
             String isGeoL3MultiSelect = nodeAndAggregationDetailsMap.get("IS_GEOGRAPHY_L3_MULTI_SELECT");
             String isGeoL4MultiSelect = nodeAndAggregationDetailsMap.get("IS_GEOGRAPHY_L4_MULTI_SELECT");
 
-            logger.error("Is Geo L1 Multi Select: {}", isGeoL1MultiSelect);
-            logger.error("Is Geo L2 Multi Select: {}", isGeoL2MultiSelect);
-            logger.error("Is Geo L3 Multi Select: {}", isGeoL3MultiSelect);
-            logger.error("Is Geo L4 Multi Select: {}", isGeoL4MultiSelect);
+            if (IS_LOG_ENABLED) {
+                logger.info("Is Geo L1 Multi Select: {}", isGeoL1MultiSelect);
+                logger.info("Is Geo L2 Multi Select: {}", isGeoL2MultiSelect);
+                logger.info("Is Geo L3 Multi Select: {}", isGeoL3MultiSelect);
+                logger.info("Is Geo L4 Multi Select: {}", isGeoL4MultiSelect);
+            }
 
-            // Use a list to collect filter conditions
             List<String> filterConditions = new ArrayList<>();
 
-            // Build L1 filter condition
             if (StringUtils.isNotBlank(isGeoL1MultiSelect) && isGeoL1MultiSelect.equalsIgnoreCase("true")) {
                 String geoL1List = nodeAndAggregationDetailsMap.get("GEOGRAPHY_L1_LIST");
                 geoL1List = geoL1List.replace("[", "").replace("]", "");
@@ -225,7 +266,6 @@ public class OTFReadMinioFiles extends Processor {
                 }
             }
 
-            // Build L2 filter condition
             if (StringUtils.isNotBlank(isGeoL2MultiSelect) && isGeoL2MultiSelect.equalsIgnoreCase("true")) {
                 String geoL2List = nodeAndAggregationDetailsMap.get("GEOGRAPHY_L2_LIST");
                 geoL2List = geoL2List.replace("[", "").replace("]", "");
@@ -242,7 +282,6 @@ public class OTFReadMinioFiles extends Processor {
                 }
             }
 
-            // Build L3 filter condition
             if (StringUtils.isNotBlank(isGeoL3MultiSelect) && isGeoL3MultiSelect.equalsIgnoreCase("true")) {
                 String geoL3List = nodeAndAggregationDetailsMap.get("GEOGRAPHY_L3_LIST");
                 geoL3List = geoL3List.replace("[", "").replace("]", "");
@@ -259,7 +298,6 @@ public class OTFReadMinioFiles extends Processor {
                 }
             }
 
-            // Build L4 filter condition
             if (StringUtils.isNotBlank(isGeoL4MultiSelect) && isGeoL4MultiSelect.equalsIgnoreCase("true")) {
                 String geoL4List = nodeAndAggregationDetailsMap.get("GEOGRAPHY_L4_LIST");
                 geoL4List = geoL4List.replace("[", "").replace("]", "");
@@ -276,39 +314,28 @@ public class OTFReadMinioFiles extends Processor {
                 }
             }
 
-            // Upload Custom Filter Condition
             String isNodeNameListEmpty = nodeAndAggregationDetailsMap.get("IS_NODE_MULTI_SELECT");
 
             if (StringUtils.isNotBlank(isNodeNameListEmpty) && isNodeNameListEmpty.equalsIgnoreCase("true")) {
-                // String nodeInfoMapJson = nodeAndAggregationDetailsMap.get("NODE_INFO_MAP");
                 String nodeNameList = nodeAndAggregationDetailsMap.get("NODE_NAME_LIST");
-
-                // @SuppressWarnings("unchecked")
-                // Map<String, String> nodeInfoMapObject = new
-                // ObjectMapper().readValue(nodeInfoMapJson, Map.class);
-
-                // List<String> upperNames = nodeInfoMapObject.values().stream()
-                // .map(name -> "'" + name.toUpperCase() + "'")
-                // .collect(Collectors.toList());
-
-                // if (!upperNames.isEmpty()) {
-                // String inClause = String.join(",", upperNames);
-                // filterConditions.add("UPPER(H1) IN (" + inClause + ")");
-                // }
                 filterConditions.add("UPPER(H1) IN (" + nodeNameList + ")");
             }
 
-            // Build final filter query
             String filterQuery = "";
             if (!filterConditions.isEmpty()) {
                 filterQuery = String.join(" AND ", filterConditions);
-                logger.error("Final Filter Query: {}", filterQuery);
+                if (IS_LOG_ENABLED) {
+                    logger.info("Final Filter Query: {}", filterQuery);
+                }
 
                 trinoNeDF = trinoNeDF.where(filterQuery);
-                // trinoNeDF.show(5, false);
-                logger.error("Trino NE DataFrame Filtered Successfully!");
+                if (IS_LOG_ENABLED) {
+                    logger.info("Trino NE DataFrame Filtered Successfully!");
+                }
             } else {
-                logger.error("No Filter Query Applied (No Valid Filter Conditions Found)");
+                if (IS_LOG_ENABLED) {
+                    logger.info("No Filter Query Applied (No Valid Filter Conditions Found)");
+                }
             }
 
             return trinoNeDF;
@@ -322,9 +349,10 @@ public class OTFReadMinioFiles extends Processor {
 
     private static Dataset<Row> readTrinoNeFileFromMinio(String trinoNeFilePath, String baseTrinoNePath,
             JobContext jobContext) {
-        logger.error("Starting to read Trino NE files from MinIO. File Paths: {}", trinoNeFilePath);
+        if (IS_LOG_ENABLED) {
+            logger.info("Starting to read Trino NE files from MinIO. File Paths: {}", trinoNeFilePath);
+        }
 
-        // Validate input parameters
         if (StringUtils.isBlank(trinoNeFilePath)) {
             throw new IllegalArgumentException("Trino NE File Paths Parameter Cannot Be Null or Empty!");
         }
@@ -340,16 +368,21 @@ public class OTFReadMinioFiles extends Processor {
 
             validateMinioParameters(endpointUrl, accessKey, secretKey, bucketName);
 
-            logger.error("Spark MinIO Endpoint URL: {}", endpointUrl);
-            logger.error("Spark MinIO Bucket Name: {}", bucketName);
+            if (IS_LOG_ENABLED) {
+                logger.info("Spark MinIO Endpoint URL: {}", endpointUrl);
+                logger.info("Spark MinIO Bucket Name: {}", bucketName);
+            }
 
             configureMinioParameters(jobContext, endpointUrl, accessKey, secretKey);
-            logger.error("MinIO/S3A Configuration Set Successfully!");
+            if (IS_LOG_ENABLED) {
+                logger.info("MinIO/S3A Configuration Set Successfully!");
+            }
 
             validateOrcPath(trinoNeFilePath);
-            logger.error("Path Format Validated Successfully!");
+            if (IS_LOG_ENABLED) {
+                logger.info("Path Format Validated Successfully!");
+            }
 
-            // Prepare reading options
             Map<String, String> optionsMap = new HashMap<>();
             optionsMap.put("basePath", baseTrinoNePath);
             optionsMap.put("mergeSchema", "true");
@@ -365,7 +398,9 @@ public class OTFReadMinioFiles extends Processor {
                 if (trimmedPath.startsWith("s3a://")) {
                     validPaths.add(trimmedPath);
                 } else {
-                    logger.error("Invalid Path Format (must start with s3a://): {}", trimmedPath);
+                    if (IS_LOG_ENABLED) {
+                        logger.info("Invalid Path Format (must start with s3a://): {}", trimmedPath);
+                    }
                 }
             }
 
@@ -373,25 +408,27 @@ public class OTFReadMinioFiles extends Processor {
                 throw new RuntimeException("No Valid File Paths Found In The Provided Paths: " + trinoNeFilePath);
             }
 
-            logger.error("Found {} Valid File Patterns To Process", validPaths.size());
+            if (IS_LOG_ENABLED) {
+                logger.info("Found {} Valid File Patterns To Process", validPaths.size());
+            }
 
-            // Check file existence and list existing files
             List<String> existingFilePaths = checkAndListExistingFiles(jobContext, validPaths);
 
             if (existingFilePaths.isEmpty()) {
-                // throw new RuntimeException("No ORC Files Found In Any Of The Provided Paths:
-                // " + trinoNeFilePath);
                 return null;
             }
 
-            logger.error("Found {} ORC Files To Read", existingFilePaths.size());
+            if (IS_LOG_ENABLED) {
+                logger.info("Found {} ORC Files To Read", existingFilePaths.size());
+            }
 
-            // Read all existing files in a single shot
             Dataset<Row> orcDataFrame = readExistingFilesInSingleShot(jobContext, existingFilePaths, optionsMap, null);
 
             if (orcDataFrame != null) {
                 orcDataFrame = orcDataFrame.cache();
-                logger.error("DataFrame Cached Successfully. Row Count: {}", orcDataFrame.count());
+                if (IS_LOG_ENABLED) {
+                    logger.info("DataFrame Cached Successfully. Row Count: {}", orcDataFrame.count());
+                }
             } else {
                 throw new RuntimeException("Failed To Read Any Data From The Provided File Paths");
             }
@@ -421,18 +458,18 @@ public class OTFReadMinioFiles extends Processor {
 
     private static String getTrinoNePath(String baseTrinoNePath, String fromDate, String toDate,
             Map<String, String> reportWidgetDetailsMap) {
-        logger.error("Base Trino NE Path: {}", baseTrinoNePath);
-        logger.error("From Date: {}", fromDate);
-        logger.error("To Date: {}", toDate);
 
-        // Extract metadata from job context
+        if (IS_LOG_ENABLED) {
+            logger.info("Base Trino NE Path: {}", baseTrinoNePath);
+            logger.info("From Date: {}", fromDate);
+            logger.info("To Date: {}", toDate);
+        }
+
         String domain = reportWidgetDetailsMap.getOrDefault("DOMAIN", "NA");
         String vendor = reportWidgetDetailsMap.getOrDefault("VENDOR", "NA");
         String emstype = reportWidgetDetailsMap.getOrDefault("EMSTYPE", "NA");
         String technology = reportWidgetDetailsMap.getOrDefault("TECHNOLOGY", "NA");
 
-        // DateTimeFormatter inputFormat = DateTimeFormatter.ofPattern("MMM dd,yyyy
-        // H:mm", Locale.ENGLISH);
         DateTimeFormatter[] inputFormats = new DateTimeFormatter[] {
                 DateTimeFormatter.ofPattern("MMM d,yyyy H:mm", Locale.ENGLISH),
                 DateTimeFormatter.ofPattern("MMM dd,yyyy H:mm", Locale.ENGLISH),
@@ -441,8 +478,6 @@ public class OTFReadMinioFiles extends Processor {
         };
         DateTimeFormatter dateFolderFormat = DateTimeFormatter.ofPattern("yyyyMMdd");
 
-        // LocalDateTime start = LocalDateTime.parse(fromDate, inputFormat);
-        // LocalDateTime end = LocalDateTime.parse(toDate, inputFormat);
         LocalDateTime start = parseFlexibleDate(fromDate, inputFormats);
         LocalDateTime end = parseFlexibleDate(toDate, inputFormats);
 
@@ -454,7 +489,7 @@ public class OTFReadMinioFiles extends Processor {
                     "%sd=%s/v=%s/emstype=%s/t=%s/date=%s",
                     baseTrinoNePath, domain, vendor, emstype, technology, dateFolder);
             uniqueDateFolders.add(fullPath);
-            start = start.plusDays(1).withHour(0).withMinute(0); // jump to next date
+            start = start.plusDays(1).withHour(0).withMinute(0);
         }
 
         return String.join(",", uniqueDateFolders);
@@ -465,7 +500,6 @@ public class OTFReadMinioFiles extends Processor {
             try {
                 return LocalDateTime.parse(dateStr, formatter);
             } catch (Exception e) {
-                // Try next format
             }
         }
         throw new IllegalArgumentException("Unable to parse date: " + dateStr);
@@ -476,11 +510,15 @@ public class OTFReadMinioFiles extends Processor {
             Map<String, Map<String, String>> counterInfoMapObject, String finalQueryMap) {
 
         String counterIds = jobContext.getParameter("FINAL_COUNTER_INFO");
-        logger.error("Final Counter IDs: {}", counterIds);
+        if (IS_LOG_ENABLED) {
+            logger.info("Final Counter IDs: {}", counterIds);
+        }
 
         Dataset<Row> emptyDF = getEmptyDF(jobContext, counterIds);
         emptyDF.createOrReplaceTempView("EMPTY_DF");
-        logger.error("Empty DataFrame Created Successfully!");
+        if (IS_LOG_ENABLED) {
+            logger.info("Empty DataFrame Created Successfully!");
+        }
 
         try {
 
@@ -498,7 +536,9 @@ public class OTFReadMinioFiles extends Processor {
                 sequenceNoList.add(sequenceno);
             }
 
-            logger.error("Sequence No List={}", sequenceNoList);
+            if (IS_LOG_ENABLED) {
+                logger.info("Sequence No List={}", sequenceNoList);
+            }
 
             String frequency = jobContext.getParameter("FREQUENCY");
 
@@ -506,25 +546,35 @@ public class OTFReadMinioFiles extends Processor {
 
             String baseDateExpr = "TO_DATE(CAST(dateKey AS STRING), 'yyyyMMdd')";
 
+            String aggregationLevel = jobContext.getParameter("AGGREGATION_LEVEL");
+
             switch (frequency.toUpperCase()) {
                 case "5 MIN":
-                case "FIVEMIN":
-                    selectBuilder = "SELECT fiveMinuteKey, quarterKey, dateKey, hourKey, fiveMinuteKey AS finalKey, interfacename, interfacename AS pmemsid, categoryname, ";
+                case "FIVEMIN": {
+
+                    if (aggregationLevel.equalsIgnoreCase("NAM")) {
+                        selectBuilder = "SELECT fiveMinuteKey, quarterKey, dateKey, hourKey, fiveMinuteKey AS finalKey, interfacename, interfacename AS pmemsid, categoryname, neid, ";
+                    } else {
+                        selectBuilder = "SELECT fiveMinuteKey, quarterKey, dateKey, hourKey, fiveMinuteKey AS finalKey, interfacename, pmemsid AS pmemsid, categoryname, neid, ";
+                    }
+
                     break;
+                }
 
                 case "15 MIN":
                 case "QUARTERLY":
-                    selectBuilder = "SELECT fiveMinuteKey, quarterKey, dateKey, hourKey, quarterKey AS finalKey, interfacename, interfacename AS pmemsid, categoryname, ";
+                    selectBuilder = "SELECT fiveMinuteKey, quarterKey, dateKey, hourKey, quarterKey AS finalKey, interfacename, interfacename AS pmemsid, categoryname, neid, ";
                     break;
 
                 case "DAILY":
-                case "PERDAY":
-                    selectBuilder = "SELECT fiveMinuteKey, quarterKey, dateKey, hourKey, dateKey AS finalKey, interfacename, interfacename AS pmemsid, categoryname, ";
+                case "PERDAY": {
+                    selectBuilder = "SELECT fiveMinuteKey, quarterKey, dateKey, hourKey, dateKey AS finalKey, interfacename, interfacename AS pmemsid, categoryname, neid, ";
                     break;
+                }
 
                 case "HOURLY":
                 case "PERHOUR":
-                    selectBuilder = "SELECT fiveMinuteKey, quarterKey, dateKey, hourKey, hourKey AS finalKey, interfacename, interfacename AS pmemsid, categoryname, ";
+                    selectBuilder = "SELECT fiveMinuteKey, quarterKey, dateKey, hourKey, hourKey AS finalKey, interfacename, interfacename AS pmemsid, categoryname, neid, ";
                     break;
 
                 case "WEEKLY":
@@ -532,7 +582,7 @@ public class OTFReadMinioFiles extends Processor {
                     selectBuilder = "SELECT fiveMinuteKey, quarterKey, dateKey, hourKey, CONCAT('W', LPAD(WEEKOFYEAR("
                             + baseDateExpr
                             + "), 2, '0'), '-', YEAR(" + baseDateExpr
-                            + ")) AS finalKey, interfacename, interfacename AS pmemsid, categoryname, ";
+                            + ")) AS finalKey, interfacename, interfacename AS pmemsid, categoryname, neid, ";
                     break;
 
                 case "MONTHLY":
@@ -540,33 +590,71 @@ public class OTFReadMinioFiles extends Processor {
                     selectBuilder = "SELECT fiveMinuteKey, quarterKey, dateKey, hourKey, CONCAT(DATE_FORMAT("
                             + baseDateExpr
                             + ", 'MMM'), '-', YEAR("
-                            + baseDateExpr + ")) AS finalKey, interfacename, interfacename AS pmemsid, categoryname, ";
+                            + baseDateExpr
+                            + ")) AS finalKey, interfacename, interfacename AS pmemsid, categoryname, neid, ";
                     break;
 
                 case "YEARLY":
                 case "PERYEAR":
                     selectBuilder = "SELECT fiveMinuteKey, quarterKey, dateKey, hourKey, YEAR(" + baseDateExpr
-                            + ") AS finalKey, interfacename, interfacename AS pmemsid, categoryname, ";
+                            + ") AS finalKey, interfacename, interfacename AS pmemsid, categoryname, neid, ";
                     break;
 
                 default:
                     throw new IllegalArgumentException("Invalid Frequency: " + frequency);
             }
 
-            logger.error("Select Builder: {}", selectBuilder);
+            if (IS_LOG_ENABLED) {
+                logger.info("Select Builder: {}", selectBuilder);
+            }
             String isKpiCodeListEmpty = jobContext.getParameter("IS_KPI_CODE_LIST_EMPTY");
-            logger.error("Is KPI Code List Empty: {}", isKpiCodeListEmpty);
+            if (IS_LOG_ENABLED) {
+                logger.info("Is KPI Code List Empty: {}", isKpiCodeListEmpty);
+            }
 
             String rawCounterList = "";
             String rawCounters = "";
             String[] sequenceColumns = null;
 
+            // When KPI code list is empty => proceed with counters-only selection
             if (StringUtils.isNotBlank(isKpiCodeListEmpty) && isKpiCodeListEmpty.equalsIgnoreCase("true")) {
 
                 String counterDetailsMapJson = jobContext.getParameter("COUNTER_DETAILS");
-                logger.error("Counter Details Map JSON: {}", counterDetailsMapJson);
+                if (IS_LOG_ENABLED) {
+                    logger.info("Counter Details Map JSON: {}", counterDetailsMapJson);
+                }
                 List<Map<String, String>> counterDetailsList = getCounterDetailsList(counterDetailsMapJson);
-                logger.error("Counter Details List: {}", counterDetailsList);
+                if (IS_LOG_ENABLED) {
+                    logger.info("Counter Details List: {}", counterDetailsList);
+                }
+
+                // Fallback: If COUNTER_DETAILS is empty, derive counters from
+                // FINAL_COUNTER_INFO
+                if (counterDetailsList.isEmpty() && StringUtils.isNotBlank(counterIds)) {
+                    List<Map<String, String>> derivedList = new ArrayList<>();
+                    for (String counter : counterIds.split(",")) {
+                        String trimmed = counter.trim();
+                        if (trimmed.isEmpty() || !trimmed.contains("#")) {
+                            continue;
+                        }
+                        String[] parts = trimmed.split("#", 2);
+                        if (parts.length != 2) {
+                            continue;
+                        }
+                        String seqWithC = parts[0]; // e.g., C3
+                        String kpiCounterIdPk = parts[1];
+                        String sequenceNo = seqWithC.replace("C", "");
+
+                        Map<String, String> detailMap = new HashMap<>();
+                        detailMap.put("KPI_COUNTER_ID_PK", kpiCounterIdPk);
+                        detailMap.put("SEQUENCE_NO", sequenceNo);
+                        derivedList.add(detailMap);
+                    }
+                    counterDetailsList = derivedList;
+                    if (IS_LOG_ENABLED) {
+                        logger.info("Derived Counter Details List From FINAL_COUNTER_INFO: {}", counterDetailsList);
+                    }
+                }
 
                 Set<String> kpiCounterIdPkSet = new HashSet<>();
 
@@ -574,10 +662,13 @@ public class OTFReadMinioFiles extends Processor {
                     String sequenceNo = counterDetails.get("SEQUENCE_NO");
                     String kpiCounterIdPk = counterDetails.get("KPI_COUNTER_ID_PK");
 
-                    logger.error("Sequence No: {}", sequenceNo);
-                    logger.error("KPI Counter ID PK: {}", kpiCounterIdPk);
+                    if (IS_LOG_ENABLED) {
+                        logger.info("Sequence No: {}", sequenceNo);
+                        logger.info("KPI Counter ID PK: {}", kpiCounterIdPk);
+                    }
 
-                    if (!kpiCounterIdPkSet.contains(kpiCounterIdPk)) {
+                    if (StringUtils.isNotBlank(sequenceNo) && StringUtils.isNotBlank(kpiCounterIdPk)
+                            && !kpiCounterIdPkSet.contains(kpiCounterIdPk)) {
                         String counter = "C" + sequenceNo + "#" + kpiCounterIdPk;
                         if (!selectBuilder.contains(counter)) {
                             selectBuilder = selectBuilder + " (`C" + sequenceNo
@@ -598,7 +689,19 @@ public class OTFReadMinioFiles extends Processor {
 
             } else {
 
-                String[] categoryListArray = categoryList.split(",");
+                if (IS_LOG_ENABLED) {
+                    logger.info("Category List: {}", categoryList);
+                    logger.info("Category Info Map Object: {}", categoryInfoMapObject);
+                }
+
+                if (categoryList == null || categoryList.trim().isEmpty()) {
+                    if (IS_LOG_ENABLED) {
+                        logger.info("Category List is null/empty. Skipping category-driven selection.");
+                    }
+                    categoryList = "";
+                }
+
+                String[] categoryListArray = categoryList.isEmpty() ? new String[0] : categoryList.split(",");
 
                 for (String category : categoryListArray) {
 
@@ -662,7 +765,9 @@ public class OTFReadMinioFiles extends Processor {
             }
 
             List<String> sequenceColumnsList = Arrays.asList(sequenceColumns);
-            logger.error("Sequence Columns List: {}", sequenceColumnsList);
+            if (IS_LOG_ENABLED) {
+                logger.info("Sequence Columns List: {}", sequenceColumnsList);
+            }
 
             int lastCommaIndex = selectBuilder.lastIndexOf(",");
             String selectClause = (lastCommaIndex != -1)
@@ -672,27 +777,68 @@ public class OTFReadMinioFiles extends Processor {
             String fromClause = " FROM TRINO_ORC_DF";
 
             String query = selectClause + fromClause;
-            logger.error("Query: {}", query);
+            if (IS_LOG_ENABLED) {
+                logger.info("Query: {}", query);
+            }
 
             Dataset<Row> updatedTrinoOrcDF = jobContext.sqlctx().sql(query);
-            // updatedTrinoOrcDF.show(5, false);
             updatedTrinoOrcDF.createOrReplaceTempView("UPDATED_TRINO_ORC_DF");
-            logger.error("Final Trino ORC DataFrame Created Successfully!");
 
-            logger.error("Raw Counter List: {}", rawCounterList);
-            logger.error("Final Query Map: {}", finalQueryMap);
+            if (IS_LOG_ENABLED) {
+                updatedTrinoOrcDF.show(5, false);
+                logger.info("Updated Trino ORC DataFrame Created Successfully!");
+                logger.info("Final Trino ORC DataFrame Created Successfully!");
+                logger.info("Raw Counter List: {}", rawCounterList);
+                logger.info("Final Query Map: {}", finalQueryMap);
+            }
 
-            String joinQuery = "SELECT c.fiveMinuteKey, c.quarterKey, c.dateKey, c.hourKey, c.finalKey, c.interfacename AS pmemsid, c.categoryname, m.NAM, "
-                    + rawCounterList + finalQueryMap
-                    + " FROM UPDATED_TRINO_ORC_DF c JOIN TRINO_NE_DF m ON UPPER(c.interfacename) =UPPER(m.pmemsid) AND c.dateKey= m.date WHERE c.interfacename IS NOT NULL AND m.pmemsid IS NOT NULL";
+            String joinQuery = "";
+            if (aggregationLevel.equalsIgnoreCase("NAM")) {
 
-            logger.error("Updated Join Query: {}", joinQuery);
+                joinQuery = "SELECT c.fiveMinuteKey, c.quarterKey, c.dateKey, c.hourKey, c.finalKey, c.interfacename AS pmemsid, c.categoryname, c.pmemsid AS NAM, "
+                        + rawCounterList + finalQueryMap
+                        + " FROM UPDATED_TRINO_ORC_DF c JOIN TRINO_NE_DF m ON UPPER(c.neid) =UPPER(m.pmemsid) AND c.dateKey= m.date WHERE c.interfacename IS NOT NULL AND TRIM(c.interfacename) <> '' AND LOWER(TRIM(c.interfacename)) <> 'null' AND m.pmemsid IS NOT NULL";
+
+            } else {
+                joinQuery = "SELECT c.fiveMinuteKey, c.quarterKey, c.dateKey, c.hourKey, c.finalKey, c.pmemsid AS pmemsid, c.categoryname, m.NAM, "
+                        + rawCounterList + finalQueryMap
+                        + " FROM UPDATED_TRINO_ORC_DF c JOIN TRINO_NE_DF m ON UPPER(c.neid) =UPPER(m.pmemsid) AND c.dateKey= m.date WHERE m.pmemsid IS NOT NULL";
+            }
+
+            if (IS_LOG_ENABLED) {
+                logger.info("Updated Join Query: {}", joinQuery);
+            }
             Dataset<Row> joinedResult = jobContext.sqlctx().sql(joinQuery);
-            Dataset<Row> updatedResult = joinedResult.withColumn(
-                    "metaData",
-                    map_concat(
-                            col("metaData"),
-                            map(lit("L0"), lit("India"))));
+
+            Dataset<Row> updatedResult;
+
+            if ("NAM".equalsIgnoreCase(aggregationLevel)) {
+                Column iface = col("pmemsid");
+                Column suffix = regexp_extract(iface, "(_.*)$", 1);
+                Column existingNamInMeta = col("metaData").getItem("NAM");
+                Column newNamInMeta = when(length(suffix).gt(lit(0)), concat(existingNamInMeta, suffix))
+                        .otherwise(existingNamInMeta);
+                Column cleanedMeta = map_from_entries(expr(
+                        "filter(map_entries(metaData), x -> x.key <> 'ENB_NEID' AND x.key <> 'NAM')"));
+
+                updatedResult = joinedResult.withColumn(
+                        "metaData",
+                        map_concat(
+                                cleanedMeta,
+                                map(lit("ENB_NEID"), iface, lit("NAM"), newNamInMeta),
+                                map(lit("L0"), lit("India"))));
+            } else {
+                updatedResult = joinedResult.withColumn(
+                        "metaData",
+                        map_concat(
+                                col("metaData"),
+                                map(lit("L0"), lit("India"))));
+            }
+
+            if (IS_LOG_ENABLED) {
+                long count = updatedResult.count();
+                logger.info("Updated Result Count: {}", count);
+            }
 
             return updatedResult;
 
@@ -767,7 +913,9 @@ public class OTFReadMinioFiles extends Processor {
 
     private static Dataset<Row> getEmptyDF(JobContext jobContext, String counterIds) {
 
-        logger.error("Getting Empty DataFrame For Counter IDs: {}", counterIds);
+        if (IS_LOG_ENABLED) {
+            logger.info("Getting Empty DataFrame For Counter IDs: {}", counterIds);
+        }
 
         StructType schema = getReturnType(counterIds);
         Dataset<Row> emptyDF = jobContext.createDataFrame(Collections.emptyList(), schema);
@@ -781,7 +929,9 @@ public class OTFReadMinioFiles extends Processor {
         try {
 
             if (countersCommaSeparated == null || countersCommaSeparated.trim().isEmpty()) {
-                logger.error("Input String For Counters is NULL/Empty. Proceeding With Static Fields Only.");
+                if (IS_LOG_ENABLED) {
+                    logger.info("Input String For Counters is NULL/Empty. Proceeding With Static Fields Only.");
+                }
             }
 
             fields.add(DataTypes.createStructField("fiveMinuteKey", DataTypes.StringType, true));
@@ -805,7 +955,9 @@ public class OTFReadMinioFiles extends Processor {
                     DataTypes.createMapType(DataTypes.StringType, DataTypes.StringType, true),
                     true));
 
-            logger.error("Successfully Constructed return StructType With {} Fields.", fields.size());
+            if (IS_LOG_ENABLED) {
+                logger.info("Successfully Constructed return StructType With {} Fields.", fields.size());
+            }
 
         } catch (Exception e) {
             logger.error("Exception While Building Return Type Schema. Input={}, Message={}, Error={}",
@@ -874,16 +1026,10 @@ public class OTFReadMinioFiles extends Processor {
             timeKey = "hourKey ";
         }
 
-        logger.error("GeneratedTime Key={}", timeKey);
-
         return timeKey;
     }
 
     private static Dataset<Row> readTrinoOrcFileFromMinio(String filePaths, String basePath, JobContext jobContext) {
-        // logger.error("📊 Starting to read files from MinIO. File Paths: {}",
-        // filePaths);
-
-        // Validate input parameters
         if (StringUtils.isBlank(filePaths)) {
             throw new IllegalArgumentException("File Paths Parameter Cannot Be Null or Empty!");
         }
@@ -892,36 +1038,37 @@ public class OTFReadMinioFiles extends Processor {
         }
 
         try {
-            // Get MinIO configuration parameters
             String endpointUrl = jobContext.getParameter("SPARK_MINIO_ENDPOINT_URL");
             String accessKey = jobContext.getParameter("SPARK_MINIO_ACCESS_KEY");
             String secretKey = jobContext.getParameter("SPARK_MINIO_SECRET_KEY");
             String bucketName = jobContext.getParameter("SPARK_MINIO_BUCKET_NAME_PM");
 
-            // Validate MinIO parameters
             validateMinioParameters(endpointUrl, accessKey, secretKey, bucketName);
 
-            logger.error("Spark MinIO Endpoint URL: {}", endpointUrl);
-            logger.error("Spark MinIO Bucket Name: {}", bucketName);
+            if (IS_LOG_ENABLED) {
+                logger.info("Spark MinIO Endpoint URL: {}", endpointUrl);
+                logger.info("Spark MinIO Bucket Name: {}", bucketName);
+            }
 
-            // Configure MinIO parameters
             configureMinioParameters(jobContext, endpointUrl, accessKey, secretKey);
-            logger.error("MinIO/S3A Configuration Set Successfully!");
+            if (IS_LOG_ENABLED) {
+                logger.info("MinIO/S3A Configuration Set Successfully!");
+            }
 
-            // Validate ORC path format
             validateOrcPath(filePaths);
-            logger.error("Path Format Validated Successfully!");
+            if (IS_LOG_ENABLED) {
+                logger.info("Path Format Validated Successfully!");
+            }
 
-            // Prepare reading options
             Map<String, String> optionsMap = new HashMap<>();
             optionsMap.put("basePath", basePath);
             optionsMap.put("mergeSchema", "true");
 
-            // Get filter query
             String filterQuery = getFilterQuery(jobContext);
-            logger.error("Filter Query: {}", filterQuery);
+            if (IS_LOG_ENABLED) {
+                logger.info("Filter Query: {}", filterQuery);
+            }
 
-            // Process file paths and collect valid paths
             List<String> validPaths = new ArrayList<>();
             String[] pathArray = filePaths.split(",");
 
@@ -931,12 +1078,12 @@ public class OTFReadMinioFiles extends Processor {
                     continue;
                 }
 
-                // Validate path format without checking existence (avoid S3A wildcard issues)
                 if (trimmedPath.startsWith("s3a://")) {
                     validPaths.add(trimmedPath);
-                    // logger.error("Added Valid Path Pattern: {}", trimmedPath);
                 } else {
-                    logger.error("Invalid Path Format (must start with s3a://): {}", trimmedPath);
+                    if (IS_LOG_ENABLED) {
+                        logger.info("Invalid Path Format (must start with s3a://): {}", trimmedPath);
+                    }
                 }
             }
 
@@ -944,26 +1091,28 @@ public class OTFReadMinioFiles extends Processor {
                 throw new RuntimeException("No Valid File Paths Found In The Provided Paths: " + filePaths);
             }
 
-            logger.error("Found {} Valid File Patterns To Process", validPaths.size());
+            if (IS_LOG_ENABLED) {
+                logger.info("Found {} Valid File Patterns To Process", validPaths.size());
+            }
 
-            // Check file existence and list existing files
             List<String> existingFilePaths = checkAndListExistingFiles(jobContext, validPaths);
 
             if (existingFilePaths.isEmpty()) {
-                // throw new RuntimeException("No ORC Files Found In Any Of The Provided Paths:
-                // " + filePaths);
                 return null;
             }
 
-            logger.error("Found {} ORC Files To Read", existingFilePaths.size());
+            if (IS_LOG_ENABLED) {
+                logger.info("Found {} ORC Files To Read", existingFilePaths.size());
+            }
 
-            // Read all existing files in a single shot
             Dataset<Row> orcDataFrame = readExistingFilesInSingleShot(jobContext, existingFilePaths, optionsMap,
                     filterQuery);
 
             if (orcDataFrame != null) {
                 orcDataFrame = orcDataFrame.cache();
-                logger.error("DataFrame Cached Successfully. Row Count: {}", orcDataFrame.count());
+                if (IS_LOG_ENABLED) {
+                    logger.info("DataFrame Cached Successfully. Row Count: {}", orcDataFrame.count());
+                }
             } else {
                 throw new RuntimeException("Failed To Read Any Data From The Provided File Paths");
             }
@@ -998,12 +1147,12 @@ public class OTFReadMinioFiles extends Processor {
     private static List<String> checkAndListExistingFiles(JobContext jobContext, List<String> validPaths) {
         List<String> existingFilePaths = new ArrayList<>();
 
-        logger.error("Checking ORC File Existence For {} Path Patterns", validPaths.size());
+        if (IS_LOG_ENABLED) {
+            logger.info("Checking ORC File Existence For {} Path Patterns", validPaths.size());
+        }
 
         for (String pathPattern : validPaths) {
             try {
-                // logger.error("Checking Path Pattern: {}", pathPattern);
-
                 Dataset<Row> fileList = jobContext.sqlctx().read()
                         .format("binaryFile")
                         .option("pathGlobFilter", "*.orc")
@@ -1019,27 +1168,36 @@ public class OTFReadMinioFiles extends Processor {
 
                 if (!orcFilesInPattern.isEmpty()) {
                     existingFilePaths.addAll(orcFilesInPattern);
-                    logger.error("Found {} ORC Files In Pattern: {}", orcFilesInPattern.size(), pathPattern);
-                    logger.error("ORC Files: {}", orcFilesInPattern);
-                } else {
-                    // logger.error("No ORC Files Found In Pattern: {}", pathPattern);
+                    if (IS_LOG_ENABLED) {
+                        logger.info("Found {} ORC Files In Pattern: {}", orcFilesInPattern.size(), pathPattern);
+                        logger.info("ORC Files: {}", orcFilesInPattern);
+                    }
                 }
 
             } catch (Exception e) {
-                // logger.error("No ORC Files Found In Pattern: {}", pathPattern);
+                if (IS_LOG_ENABLED) {
+                    logger.error("Error Checking ORC File Existence For Path Pattern: {}", pathPattern, e);
+                }
             }
         }
 
-        logger.error("Total ORC Files Found: {}", existingFilePaths.size());
+        if (IS_LOG_ENABLED) {
+            logger.info("Total ORC Files Found: {}", existingFilePaths.size());
+        }
 
         if (existingFilePaths.isEmpty()) {
-            logger.error("No ORC Files Found In Any Of The Provided Paths!");
+            if (IS_LOG_ENABLED) {
+                logger.info("No ORC Files Found In Any Of The Provided Paths!");
+            }
         } else {
-            logger.error("Successfully Found ORC Files In {} Paths",
-                    existingFilePaths.stream().map(path -> {
-                        int lastSlash = path.lastIndexOf('/');
-                        return lastSlash > 0 ? path.substring(0, lastSlash) : path;
-                    }).distinct().count());
+
+            if (IS_LOG_ENABLED) {
+                logger.info("Successfully Found ORC Files In {} Paths",
+                        existingFilePaths.stream().map(path -> {
+                            int lastSlash = path.lastIndexOf('/');
+                            return lastSlash > 0 ? path.substring(0, lastSlash) : path;
+                        }).distinct().count());
+            }
         }
 
         return existingFilePaths;
@@ -1050,7 +1208,9 @@ public class OTFReadMinioFiles extends Processor {
      */
     private static Dataset<Row> readExistingFilesInSingleShot(JobContext jobContext, List<String> existingFilePaths,
             Map<String, String> optionsMap, String filterQuery) {
-        logger.error("Reading {} Files In Single Shot", existingFilePaths.size());
+        if (IS_LOG_ENABLED) {
+            logger.info("Reading {} Files In Single Shot", existingFilePaths.size());
+        }
 
         try {
             String[] filePathsArray = existingFilePaths.toArray(new String[0]);
@@ -1061,12 +1221,18 @@ public class OTFReadMinioFiles extends Processor {
 
             if (StringUtils.isNotBlank(filterQuery)) {
                 orcDataFrame = orcDataFrame.where(filterQuery);
-                logger.error("Applied Filter Query: {}", filterQuery);
+                if (IS_LOG_ENABLED) {
+                    logger.info("Applied Filter Query: {}", filterQuery);
+                }
             } else {
-                logger.error("No Filter Query Applied (Filter Query is null or empty)");
+                if (IS_LOG_ENABLED) {
+                    logger.info("No Filter Query Applied (Filter Query is null or empty)");
+                }
             }
 
-            logger.error("Successfully Read All Files In Single Shot");
+            if (IS_LOG_ENABLED) {
+                logger.info("Successfully Read All Files In Single Shot");
+            }
             return orcDataFrame;
 
         } catch (Exception e) {
@@ -1085,11 +1251,15 @@ public class OTFReadMinioFiles extends Processor {
         int successCount = 0;
         int failureCount = 0;
 
-        logger.error("Starting Individual File Reading For {} Files", existingFilePaths.size());
+        if (IS_LOG_ENABLED) {
+            logger.info("Starting Individual File Reading For {} Files", existingFilePaths.size());
+        }
 
         for (String filePath : existingFilePaths) {
             try {
-                logger.error("Attempting to read: {}", filePath);
+                if (IS_LOG_ENABLED) {
+                    logger.info("Attempting to read: {}", filePath);
+                }
 
                 Dataset<Row> df = jobContext.getFileReader()
                         .options(optionsMap)
@@ -1107,9 +1277,13 @@ public class OTFReadMinioFiles extends Processor {
                         combinedDataFrame = combinedDataFrame.unionByName(df, true);
                     }
                     successCount++;
-                    logger.error("Successfully Read File: {} ({} rows)", filePath, rowCount);
+                    if (IS_LOG_ENABLED) {
+                        logger.info("Successfully Read File: {} ({} rows)", filePath, rowCount);
+                    }
                 } else {
-                    logger.error("File Has No Data After Filtering: {}", filePath);
+                    if (IS_LOG_ENABLED) {
+                        logger.info("File Has No Data After Filtering: {}", filePath);
+                    }
                 }
 
             } catch (Exception e) {
@@ -1123,7 +1297,9 @@ public class OTFReadMinioFiles extends Processor {
             }
         }
 
-        logger.error("Individual File Reading Completed. Success: {}, Failures: {}", successCount, failureCount);
+        if (IS_LOG_ENABLED) {
+            logger.info("Individual File Reading Completed. Success: {}, Failures: {}", successCount, failureCount);
+        }
 
         if (combinedDataFrame == null) {
             throw new RuntimeException(

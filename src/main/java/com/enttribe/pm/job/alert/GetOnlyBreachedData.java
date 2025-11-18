@@ -123,6 +123,7 @@ public class GetOnlyBreachedData extends Processor {
             JobContext jobContext) {
 
         String expression = configurationMap.get("EXPRESSION");
+        logger.info("Expression: {}", expression);
 
         if (expression == null || expression.isEmpty()) {
             logger.info("Expression is NULL or Empty. Skipping Expression Evaluation.");
@@ -130,8 +131,10 @@ public class GetOnlyBreachedData extends Processor {
         }
 
         expression = expression.replace("COUNTER#", "KPI#");
+        logger.info("Expression after replacing COUNTER# with KPI#: {}", expression);
         expression = replaceKPICounterValueInExpression(expression, kpiCounterMap);
 
+        logger.info("Expression after replacing KPICounterValueInExpression: {}", expression);
         return evaluateExpression(expression);
 
     }

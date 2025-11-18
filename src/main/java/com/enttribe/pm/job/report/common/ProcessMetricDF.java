@@ -144,15 +144,16 @@ public class ProcessMetricDF extends Processor {
 
         logger.info("[ProcessMetricDF] Execution Completed! Time Taken: {} Minutes | {} Seconds", minutes, seconds);
 
-        if (expectedDataFrame != null && !expectedDataFrame.isEmpty()) {
-            // expectedDataFrame.show(5, false);
-            logger.info("++[ProcessMetricDF] Expected DataFrame Displayed Successfully!");
-            int before = expectedDataFrame.rdd().getNumPartitions();
-            logger.info("Number of Partitions Before Repartition: {}", before);
-            expectedDataFrame = expectedDataFrame.repartition(100);
-            int after = expectedDataFrame.rdd().getNumPartitions();
-            logger.info("Number of Partitions After Repartition: {}", after);
-        }
+        // if (expectedDataFrame != null && !expectedDataFrame.isEmpty()) {
+        // expectedDataFrame.show(5, false);
+        // logger.info("++[ProcessMetricDF] Expected DataFrame Displayed
+        // Successfully!");
+        // int before = expectedDataFrame.rdd().getNumPartitions();
+        // logger.info("Number of Partitions Before Repartition: {}", before);
+        // expectedDataFrame = expectedDataFrame.repartition(100);
+        // int after = expectedDataFrame.rdd().getNumPartitions();
+        // logger.info("Number of Partitions After Repartition: {}", after);
+        // }
 
         return expectedDataFrame;
     }

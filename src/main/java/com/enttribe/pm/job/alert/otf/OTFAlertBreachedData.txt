@@ -51,18 +51,13 @@ public class OTFAlertBreachedData extends Processor {
         }
         logger.info("Input DataFrame Row Size : {}", rows.size());
 
-        String currentIndex = jobContext.getParameter("START_INDEX");
-
-        String kpiCodes = jobContext.getParameter("KPI_CODES" + currentIndex);
-        String counterIds = jobContext.getParameter("COUNTER_IDS" + currentIndex);
-
-        logger.info("============KPI Codes: {}", kpiCodes);
-        logger.info("============Counter IDs: {}", counterIds);
+        String kpiCodes = jobContext.getParameter("KPI_CODES");
+        String counterIds = jobContext.getParameter("COUNTER_IDS");
 
         String[] kpiCodesArray = kpiCodes.split(",");
         String[] counterIdsArray = counterIds.split(",");
 
-        
+        String currentIndex = jobContext.getParameter("START_INDEX");
         logger.info("OTFAlertBreachedData START_INDEX: {}", currentIndex);
 
         String configurationMapJson = jobContext.getParameter("CONFIGURATION_MAP" + currentIndex);
@@ -124,18 +119,15 @@ public class OTFAlertBreachedData extends Processor {
             JobContext jobContext) {
 
         String expression = configurationMap.get("EXPRESSION");
-        logger.info("Expression: {}", expression);
 
         if (expression == null || expression.isEmpty()) {
             logger.info("Expression is NULL or Empty. Skipping Expression Evaluation.");
             return "0";
         }
 
-        logger.info("Expression after replacing COUNTER# with KPI#: {}", expression);
         expression = expression.replace("COUNTER#", "KPI#");
-        logger.info("Expression after replacing COUNTER# with KPI#: {}", expression);
         expression = replaceKPICounterValueInExpression(expression, kpiCounterMap);
-        logger.info("Expression after replacing KPICounterValueInExpression: {}", expression);
+
         return evaluateExpression(expression);
 
     }
@@ -165,8 +157,6 @@ public class OTFAlertBreachedData extends Processor {
     }
 
     private static String replaceKPICounterValueInExpression(String expression, Map<String, String> kpiCounterMap) {
-        logger.info("Expression: {}", expression);
-        logger.info("KPI Counter Map: {}", kpiCounterMap);
         StringBuilder optimizedExpression = new StringBuilder(expression);
 
         if (expression.contains("KPI#")) {
@@ -195,9 +185,6 @@ public class OTFAlertBreachedData extends Processor {
     }
 
     private static Map<String, String> getKpiCounterMap(Row row, String[] kpiCodesArray, String[] counterIdsArray) {
-        // logger.info("KPI Codes Array: {}", kpiCodesArray);
-        // logger.info("Counter IDs Array: {}", counterIdsArray);
-        // logger.info("Row: {}", row);
         Map<String, String> kpiCounterMap = new HashMap<>();
 
         if (kpiCodesArray != null) {

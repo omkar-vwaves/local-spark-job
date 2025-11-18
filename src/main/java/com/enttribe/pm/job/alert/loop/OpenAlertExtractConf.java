@@ -5,6 +5,7 @@ import com.enttribe.sparkrunner.processors.Processor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -32,9 +33,12 @@ public class OpenAlertExtractConf extends Processor {
     }
 
     public Dataset<Row> executeAndGetResultDataframe(JobContext jobContext) throws Exception {
+        logger.info("OpenAlertExtractConf Execution Started! (Updated)");
         if (this.dataFrame == null || this.dataFrame.isEmpty()) {
+            logger.info("Input DataFrame is NULL or EMPTY. Skipping OpenAlertExtractConf!");
             jobContext.setParameters("FINAL_COUNT", "0");
             jobContext.setParameters("CURRENT_COUNT", "0");
+            logger.info("OpenAlertExtractConf Execution Completed!");
             return this.dataFrame;
         }
         this.dataFrame.show();
@@ -230,79 +234,65 @@ public class OpenAlertExtractConf extends Processor {
 
         try {
 
-            String configuration = inputMap.get("CONFIGURATION");
-            configuration = configuration.replace("\"", "");
+            String configRaw = inputMap.get("CONFIGURATION");
+            String configuration = configRaw == null ? "{}" : configRaw.replace("'", "\"").replaceAll("^\"|\"$", "");
 
             Map<String, String> parameters = new LinkedHashMap<>();
 
             JSONObject configJson = new JSONObject(configuration);
 
-            JSONArray nodeJSON = configJson.getJSONArray("node");
-            List<String> nodeArray = getStringListFromArray(nodeJSON);
-            String node = nodeArray.get(0);
+            JSONArray nodeJSON = configJson.optJSONArray("node");
+            List<String> nodeArray = nodeJSON != null ? getStringListFromArray(nodeJSON) : Collections.emptyList();
+            String node = !nodeArray.isEmpty() ? nodeArray.get(0) : "";
 
-            String classification = configJson.getString("classification");
-            classification = classification != null && !classification.isEmpty() ? classification.toUpperCase()
-                    : inputMap.get("CLASSIFICATION");
+            String classification = configJson.optString("classification", inputMap.get("CLASSIFICATION"));
+            classification = classification != null ? classification.toUpperCase() : "";
 
-            String serviceAffecting = configJson.getString("serviceaffecting");
-            serviceAffecting = serviceAffecting != null && !serviceAffecting.isEmpty() ? serviceAffecting.toLowerCase()
-                    : inputMap.get("SERVICE_AFFECTING");
+            String serviceAffecting = configJson.optString("serviceaffecting", inputMap.get("SERVICE_AFFECTING"));
+            serviceAffecting = serviceAffecting != null ? serviceAffecting.toLowerCase() : "false";
+            serviceAffecting = ("true".equalsIgnoreCase(serviceAffecting)) ? "0" : "1";
 
-            serviceAffecting = (serviceAffecting.equalsIgnoreCase("true")) ? "0" : "1";
-
-            String severity = "";
-            if (configJson.has("priority")) {
-                severity = configJson.getString("priority");
-            } else {
-                severity = inputMap.get("DEFAULT_SEVERITY");
-            }
-
-            String upperSeverity = severity.toUpperCase();
+            String severity = configJson.optString("priority", inputMap.get("DEFAULT_SEVERITY"));
+            String upperSeverity = severity != null ? severity.toUpperCase() : "";
             if ("EMERGENCY".equalsIgnoreCase(upperSeverity)) {
                 severity = "CRITICAL";
             }
 
             String outOfLast = "0";
             String instances = "0";
-
-            JSONObject consistencyJson = configJson.getJSONObject("Consistency");
-            if (consistencyJson.has("outOfLast") && !consistencyJson.getString("outOfLast").isEmpty()) {
-                outOfLast = consistencyJson.getString("outOfLast");
+            JSONObject consistencyJson = configJson.optJSONObject("Consistency");
+            if (consistencyJson != null) {
+                String outOfLastVal = consistencyJson.optString("outOfLast", "");
+                if (!outOfLastVal.isEmpty())
+                    outOfLast = outOfLastVal;
+                String instancesVal = consistencyJson.optString("Instances", "");
+                if (!instancesVal.isEmpty())
+                    instances = instancesVal;
             }
 
-            if (consistencyJson.has("Instances") && !consistencyJson.getString("Instances").isEmpty()) {
-                instances = consistencyJson.getString("Instances");
-            }
+            JSONArray cellArray = configJson.optJSONArray("cells");
+            JSONArray geoL1Array = configJson.optJSONArray("geography_l1");
+            JSONArray geoL2Array = configJson.optJSONArray("geography_l2");
+            JSONArray geoL3Array = configJson.optJSONArray("geography_l3");
+            JSONArray geoL4Array = configJson.optJSONArray("geography_l4");
 
-            JSONArray cellArray = configJson.getJSONArray("cells");
-            JSONArray geoL1Array = configJson.getJSONArray("geography_l1");
-            JSONArray geoL2Array = configJson.getJSONArray("geography_l2");
-            JSONArray geoL3Array = configJson.getJSONArray("geography_l3");
-            JSONArray geoL4Array = configJson.getJSONArray("geography_l4");
-
-            List<String> cellList = getStringListFromArray(cellArray);
-            List<String> geoL1List = getStringListFromArray(geoL1Array);
-            List<String> geoL2List = getStringListFromArray(geoL2Array);
-            List<String> geoL3List = getStringListFromArray(geoL3Array);
-            List<String> geoL4List = getStringListFromArray(geoL4Array);
+            List<String> cellList = cellArray != null ? getStringListFromArray(cellArray) : Collections.emptyList();
+            List<String> geoL1List = geoL1Array != null ? getStringListFromArray(geoL1Array) : Collections.emptyList();
+            List<String> geoL2List = geoL2Array != null ? getStringListFromArray(geoL2Array) : Collections.emptyList();
+            List<String> geoL3List = geoL3Array != null ? getStringListFromArray(geoL3Array) : Collections.emptyList();
+            List<String> geoL4List = geoL4Array != null ? getStringListFromArray(geoL4Array) : Collections.emptyList();
 
             String level = getLevelForReport(geoL1List, geoL2List, geoL3List, geoL4List, cellList, node,
                     geoL1List, inputMap.get("DOMAIN"));
 
-            String isNodeLevel = "false";
+            String isNodeLevel;
             if (!level.contains("L0") && !level.contains("L1") && !level.contains("L2")
                     && !level.contains("L3") && !level.contains("L4")) {
-
-                if (geoL1List.get(0).toUpperCase().equalsIgnoreCase("INDIA")) {
-                    isNodeLevel = "false";
-                } else {
-                    isNodeLevel = "true";
-                }
-
+                isNodeLevel = geoL1List.isEmpty() || geoL1List.get(0).equalsIgnoreCase("INDIA") ? "false" : "true";
+            } else {
+                isNodeLevel = "false";
             }
 
-            // String dataLevelAppender = jobContext.getParameter("ROW_KEY_APPENDER");
             String DOMAIN = inputMap.get("DOMAIN");
             String VENDOR = inputMap.get("VENDOR");
             String TECHNOLOGY = inputMap.get("TECHNOLOGY");
@@ -319,38 +309,32 @@ public class OpenAlertExtractConf extends Processor {
 
             Dataset<Row> df = executeQuery(mysqlQuery.toString(), jobContext);
 
-            List<String> dataLevelAppenders = df.as(Encoders.STRING()).collectAsList();
+            List<String> dataLevelAppenders = df != null ? df.as(Encoders.STRING()).collectAsList()
+                    : Collections.emptyList();
             String dataLevelAppender = dataLevelAppenders.isEmpty() ? "" : dataLevelAppenders.get(0);
 
             logger.info("Data Level Appender: {}", dataLevelAppender);
 
-            String datalevel = "";
-
+            String datalevel;
             switch (level) {
-                case "L0": {
+                case "L0":
                     datalevel = "L0" + "_" + dataLevelAppender;
                     break;
-                }
-                case "L1": {
+                case "L1":
                     datalevel = "L1" + "_" + dataLevelAppender;
                     break;
-                }
-                case "L2": {
+                case "L2":
                     datalevel = "L2" + "_" + dataLevelAppender;
                     break;
-                }
-                case "L3": {
+                case "L3":
                     datalevel = "L3" + "_" + dataLevelAppender;
                     break;
-                }
-                case "L4": {
+                case "L4":
                     datalevel = "L4" + "_" + dataLevelAppender;
                     break;
-                }
-                default: {
+                default:
                     datalevel = level + "_" + dataLevelAppender;
                     break;
-                }
             }
 
             logger.info("Generated DataLevel is : {}", datalevel);
@@ -386,64 +370,91 @@ public class OpenAlertExtractConf extends Processor {
             parameters.put("SERVICE_AFFECTING", serviceAffecting);
 
             String manuallyCloseable = inputMap.get("MANUAL_CLEARED");
-            if (manuallyCloseable != null && manuallyCloseable.equalsIgnoreCase("true")) {
-                manuallyCloseable = "1";
-            } else {
-                manuallyCloseable = "0";
-            }
+            manuallyCloseable = (manuallyCloseable != null && manuallyCloseable.equalsIgnoreCase("true")) ? "1" : "0";
 
             String correlationEnable = inputMap.get("CORRELATION_ENABLE");
-            if (correlationEnable != null && correlationEnable.equalsIgnoreCase("true")) {
-                correlationEnable = "1";
-            } else {
-                correlationEnable = "0";
-            }
+            correlationEnable = (correlationEnable != null && correlationEnable.equalsIgnoreCase("true")) ? "1" : "0";
 
             parameters.put("MANUALLY_CLOSEABLE", manuallyCloseable);
             parameters.put("CORRELATION_FLAG", correlationEnable);
             parameters.put("EVENT_TYPE", inputMap.get("EVENT_TYPE"));
             parameters.put("SENDER_NAME", inputMap.get("EMS_TYPE"));
 
-            String cqlTableName = generateCQLTableNameBasedOnFrequency(jobContext);
-            parameters.put("cqlTableName", cqlTableName);
-
-            String expression = inputMap.get("EXPRESSION");
-            List<String> kpiCodeList = getKPICodeListFromExpression(expression);
-
-            parameters.put("kpiCodeList", kpiCodeList.toString());
-
-            // Added
-
+            // Determine frequency safely first
             String frequency = "15 MIN";
             try {
                 if (configJson.has("frequency")) {
-                    JSONArray freqArray = configJson.getJSONArray("frequency");
+                    JSONArray freqArray = configJson.optJSONArray("frequency");
                     if (freqArray != null && freqArray.length() > 0) {
-                        String freq = freqArray.getString(0);
+                        String freq = freqArray.optString(0, "");
                         if (freq != null && !freq.isEmpty()) {
                             frequency = freq.toUpperCase();
                         }
                     }
                 }
-            } catch (Exception e) {
+            } catch (Exception ignored) {
             }
             parameters.put("FREQUENCY", frequency);
-            String ruleType = null;
-            if (configJson.has("ruleType")) {
-                ruleType = configJson.optString("ruleType", "STATIC_EXPRESSION");
+
+            if (jobContext.getParameter("FREQUENCY") == null || jobContext.getParameter("FREQUENCY").isEmpty()) {
+                jobContext.setParameters("FREQUENCY", frequency);
             }
+            String cqlTableName = generateCQLTableNameBasedOnFrequency(jobContext);
+            parameters.put("cqlTableName", cqlTableName);
+
+            String expression = inputMap.get("EXPRESSION");
+            List<String> kpiCodeList = getKPICodeListFromExpression(expression);
+            parameters.put("kpiCodeList", kpiCodeList.toString());
+
+            String ruleType = configJson.optString("ruleType", "STATIC_EXPRESSION");
             ruleType = (ruleType == null || ruleType.isEmpty()) ? "STATIC_EXPRESSION" : ruleType;
+            if (ruleType.equalsIgnoreCase("PERCENTAGE")) {
+                ruleType = "TREND_RULE";
+            } else {
+                ruleType = "STATIC_EXPRESSION";
+            }
             parameters.put("RULE_TYPE", ruleType);
 
-            JSONObject conditionObj = configJson.getJSONObject("conditionObj");
-            String bufferWindow = null;
-            if (conditionObj.has("bufferWindow")) {
-                bufferWindow = conditionObj.optString("bufferWindow", "1");
+            String bufferWindow = "1";
+            try {
+                if (configJson.has("startBufferWindow")) {
+                    String startBufferWindow = configJson.optString("startBufferWindow", "1");
+                    if (!startBufferWindow.isEmpty()) {
+                        bufferWindow = startBufferWindow;
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+            try {
+                int bufferVal = Integer.parseInt(bufferWindow);
+                if (bufferVal < 1) {
+                    bufferWindow = "1";
+                }
+            } catch (Exception e) {
+                bufferWindow = "1";
             }
             parameters.put("BUFFER_WINDOW", bufferWindow);
+
+            String bufferFunction = "AVG";
+            try {
+                if (configJson.has("startBufferFunction")) {
+                    String startBufferFunction = configJson.optString("startBufferFunction", "AVG");
+                    if (!startBufferFunction.isEmpty()) {
+                        bufferFunction = startBufferFunction.toUpperCase();
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+            List<String> validFunctions = Arrays.asList("AVG", "SUM", "MIN", "MAX");
+            if (!validFunctions.contains(bufferFunction)) {
+                bufferFunction = "AVG";
+            }
+            parameters.put("FUNCTION", bufferFunction);
+
             return parameters;
 
         } catch (Exception e) {
+            logger.error("Error Extracting Parameters from CONFIGURATION: {}", e.getMessage(), e);
             return new LinkedHashMap<>();
         }
     }
@@ -469,7 +480,7 @@ public class OpenAlertExtractConf extends Processor {
             return resultDataset;
 
         } catch (Exception e) {
-            logger.error("⚠️ Exception in Executing Query, Message: " + e.getMessage() + " | Error: " + e);
+            logger.error("Exception in Executing Query, Message: " + e.getMessage() + " | Error: " + e);
             return resultDataset;
         }
 
@@ -578,8 +589,9 @@ public class OpenAlertExtractConf extends Processor {
     private static String generateCQLTableNameBasedOnFrequency(JobContext jobContext) {
 
         String jobFrequency = jobContext.getParameter("FREQUENCY");
+        String safe = (jobFrequency == null || jobFrequency.isEmpty()) ? "15 MIN" : jobFrequency;
 
-        return switch (jobFrequency.toUpperCase()) {
+        return switch (safe.toUpperCase()) {
             case "5 MIN" -> "combine5minpm";
             case "FIVEMIN" -> "combine5minpm";
             case "15 MIN" -> "combinequarterlypm";

@@ -268,7 +268,19 @@ public class ReadConfigUDF implements
                 String vendor = reportWidgetDetails.get("vendor");
                 String emsType = "NA";
 
-                String configKey = domain + "_" + technology + "_" + vendor + "_" + emsType + "_" + frequency
+                String freqBaseKEY = frequency;
+
+                if (frequency.equalsIgnoreCase("PERHOUR")) {
+                    freqBaseKEY = "HOURLY";
+                } else if (frequency.equalsIgnoreCase("PERDAY")) {
+                    freqBaseKEY = "DAILY";
+                } else if (frequency.equalsIgnoreCase("PERWEEK")) {
+                    freqBaseKEY = "WEEKLY";
+                } else if (frequency.equalsIgnoreCase("PERMONTH")) {
+                    freqBaseKEY = "MONTHLY";
+                }
+
+                String configKey = domain + "_" + technology + "_" + vendor + "_" + emsType + "_" + freqBaseKEY
                         + "_KPICOMPUTATION";
                 String configTag = "PM";
                 String configType = "PM";
@@ -317,6 +329,11 @@ public class ReadConfigUDF implements
 
             }
 
+            String utcOffsetInMinute = "0";
+            if (jsonObject.has("utcOffsetInMinute")) {
+                utcOffsetInMinute = jsonObject.optString("utcOffsetInMinute", "0");
+            }
+
             extraParameters.put("metaColumns", metaColumns);
             extraParameters.put("reportFormatType", reportFormatType);
             extraParameters.put("toDate", toDate);
@@ -325,6 +342,7 @@ public class ReadConfigUDF implements
             extraParameters.put("endTime", endTime);
             extraParameters.put("kpiExpression", kpiExpression);
             extraParameters.put("selectedHeader", selectedHeader);
+            extraParameters.put("utcOffsetInMinute", utcOffsetInMinute);
 
             String isSpecificDate = "false";
             JSONArray specificDate = jsonObject.getJSONArray("specificDate");
@@ -372,7 +390,7 @@ public class ReadConfigUDF implements
         DateTimeFormatter formatter = null;
         if (frequency.equalsIgnoreCase("PERHOUR") || frequency.equalsIgnoreCase("PERDAY")
                 || frequency.equalsIgnoreCase("PERWEEK") || frequency.equalsIgnoreCase("PERMONTH")) {
-            formatter = DateTimeFormatter.ofPattern("yyMMdd");
+            formatter = DateTimeFormatter.ofPattern("yyyyMMdd");
         } else {
             formatter = DateTimeFormatter.ofPattern("yyyyMMdd");
         }
@@ -724,8 +742,9 @@ public class ReadConfigUDF implements
             logger.info("[ReadConfigUDF] Formatted Date: {}", formattedDate);
             return formattedDate;
         } catch (Exception e) {
-            logger.error("[ReadConfigUDF] Error in Converting Date to Expected TimeStamp Format: {}", e.getMessage(),
-                    e);
+            // logger.error("[ReadConfigUDF] Error in Converting Date to Expected TimeStamp
+            // Format: {}", e.getMessage(),
+            // e);
             LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
             DateTimeFormatter outputFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSxx");
             String formattedDate = now.atOffset(ZoneOffset.UTC).format(outputFormatter);
@@ -1145,7 +1164,7 @@ public class ReadConfigUDF implements
                         logger.error("[ReadConfigUDF] Error Getting inputFilter: {}", e.getMessage(), e);
                         continue;
                     }
-                    
+
                     selectedHexColor = config.getString("selectedHexColor");
 
                     String operator = switch (selectedCondition) {
